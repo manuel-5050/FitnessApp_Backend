@@ -1,0 +1,3147 @@
+===================================================
+FILE: backend-structure.txt
+===================================================
+├── accounts/
+│   ├── __init__.py
+│   ├── admin.py
+│   ├── apps.py
+│   ├── models.py
+│   ├── serializers.py
+│   ├── tests.py
+│   ├── urls.py
+│   ├── views.py
+├── ai_engine/
+│   ├── __init__.py
+│   ├── admin.py
+│   ├── apps.py
+│   ├── models.py
+│   ├── services.py
+│   ├── tests.py
+│   ├── urls.py
+│   ├── views.py
+├── fitness/
+│   ├── __init__.py
+│   ├── admin.py
+│   ├── apps.py
+│   ├── channels_auth.py
+│   ├── consumers.py
+│   ├── models.py
+│   ├── routing.py
+│   ├── serializers.py
+│   ├── services.py
+│   ├── tests.py
+│   ├── urls.py
+│   ├── views.py
+├── fitness_backend/
+│   ├── __init__.py
+│   ├── asgi.py
+│   ├── settings.py
+│   ├── urls.py
+│   ├── wsgi.py
+├── .env
+├── backend-contents.txt
+├── backend-structure.txt
+├── manage.py
+├── requirements.txt
+
+
+
+===================================================
+FILE: manage.py
+===================================================
+#!/usr/bin/env python
+"""Django's command-line utility for administrative tasks."""
+import os
+import sys
+
+
+def main():
+    """Run administrative tasks."""
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'fitness_backend.settings')
+    try:
+        from django.core.management import execute_from_command_line
+    except ImportError as exc:
+        raise ImportError(
+            "Couldn't import Django. Are you sure it's installed and "
+            "available on your PYTHONPATH environment variable? Did you "
+            "forget to activate a virtual environment?"
+        ) from exc
+    execute_from_command_line(sys.argv)
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+===================================================
+FILE: requirements.txt
+===================================================
+annotated-types==0.8.0
+anyio==4.14.2
+asgiref==3.12.1
+attrs==26.1.0
+autobahn==26.7.1
+Automat==25.4.16
+cbor2==6.1.3
+certifi==2026.7.22
+cffi==2.1.0
+channels==4.3.1
+channels_redis==4.3.0
+colorama==0.4.6
+constantly==23.10.4
+cryptography==49.0.0
+daphne==4.2.1
+distro==1.9.0
+Django==5.2.16
+django-cors-headers==4.9.0
+djangorestframework==3.17.1
+djangorestframework_simplejwt==5.5.1
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+hyperlink==21.0.0
+idna==3.18
+Incremental==24.11.0
+jiter==0.16.0
+msgpack==1.2.1
+openai==2.48.0
+packaging==26.2
+psycopg2-binary==2.9.12
+pycparser==3.0
+pydantic==2.13.4
+pydantic_core==2.46.4
+PyJWT==2.13.0
+pyOpenSSL==26.3.0
+pypdf==6.14.2
+python-dotenv==1.2.2
+redis==8.0.1
+service-identity==26.1.0
+sniffio==1.3.1
+sqlparse==0.5.5
+tqdm==4.69.0
+Twisted==26.4.0
+txaio==26.6.1
+typing-inspection==0.4.2
+typing_extensions==4.16.0
+tzdata==2026.3
+ujson==5.13.0
+zope.interface==8.5
+
+
+
+===================================================
+FILE: accounts\__init__.py
+===================================================
+
+
+===================================================
+FILE: accounts\admin.py
+===================================================
+from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin
+from .models import User
+
+class CustomUserAdmin(UserAdmin):
+    model = User
+    list_display = ['email', 'first_name', 'last_name', 'role', 'is_staff', 'is_active']
+    list_filter = ['role', 'is_staff', 'is_active']
+    fieldsets = UserAdmin.fieldsets + (
+        ('Custom Roles', {'fields': ('role', 'phone_number')}),
+    )
+    add_fieldsets = UserAdmin.add_fieldsets + (
+        ('Custom Roles', {'fields': ('role', 'phone_number')}),
+    )
+    ordering = ['email']
+
+admin.site.register(User, CustomUserAdmin)
+
+
+===================================================
+FILE: accounts\apps.py
+===================================================
+from django.apps import AppConfig
+
+
+class AccountsConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'accounts'
+
+
+
+===================================================
+FILE: accounts\models.py
+===================================================
+from django.db import models
+from django.contrib.auth.models import AbstractUser
+
+class User(AbstractUser):
+    # Defining our 3 User Roles as text options
+    class Role(models.TextChoices):
+        ADMIN = 'ADMIN', 'Admin'
+        TRAINER = 'TRAINER', 'Trainer'
+        USER = 'USER', 'User'
+
+    email = models.EmailField(unique=True)
+    role = models.CharField(max_length=15, choices=Role.choices, default=Role.USER)
+    phone_number = models.CharField(max_length=15, blank=True, null=True)
+
+    # Use email as the main username identifier
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['username']
+
+    def __str__(self):
+        return f"{self.email} ({self.get_role_display()})"
+
+
+===================================================
+FILE: accounts\serializers.py
+===================================================
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+# Serializer to safely display user details (hides sensitive fields like password hashes)
+class UserSerializer(serializers.ModelSerializer):
+    has_completed_onboarding = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ('id', 'email', 'first_name', 'last_name', 'role', 'phone_number', 'has_completed_onboarding')
+        read_only_fields = ('id', 'role')
+
+    def get_has_completed_onboarding(self, user):
+        if user.role in [User.Role.TRAINER, User.Role.ADMIN]:
+            return hasattr(user, 'trainer_profile') and bool(user.trainer_profile.bio or user.trainer_profile.specialties)
+        return hasattr(user, 'profile')
+
+# Serializer to handle user sign-ups
+class UserRegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
+
+    class Meta:
+        model = User
+        fields = ('id', 'email', 'first_name', 'last_name', 'role', 'phone_number', 'password')
+        extra_kwargs = {
+            'first_name': {'required': True},
+            'last_name': {'required': True},
+        }
+
+    # Custom create method to cleanly hash the password and match email to username
+    def create(self, validated_data):
+        password = validated_data.pop('password')
+        role = validated_data.get('role', User.Role.USER)
+        
+        user = User.objects.create_user(
+            username=validated_data['email'],  # Django's AbstractUser requires a unique username
+            email=validated_data['email'],
+            first_name=validated_data.get('first_name', ''),
+            last_name=validated_data.get('last_name', ''),
+            role=role,
+            phone_number=validated_data.get('phone_number', ''),
+            password=password
+        )
+        return user
+
+
+===================================================
+FILE: accounts\tests.py
+===================================================
+from django.test import TestCase
+
+# Create your tests here.
+
+
+
+===================================================
+FILE: accounts\urls.py
+===================================================
+from django.urls import path
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from .views import RegisterView, UserMeView
+
+urlpatterns = [
+    # 1. Registration endpoint: POST /api/auth/register/
+    path('register/', RegisterView.as_view(), name='auth_register'),
+    
+    # 2. Login endpoint (returns access & refresh JWT tokens): POST /api/auth/token/
+    path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    
+    # 3. Token refresh endpoint: POST /api/auth/token/refresh/
+    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    
+    # 4. Fetch current user details: GET /api/auth/me/
+    path('me/', UserMeView.as_view(), name='auth_me'),
+]
+
+
+===================================================
+FILE: accounts\views.py
+===================================================
+from rest_framework import generics, status
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from django.contrib.auth import get_user_model
+from .serializers import UserRegisterSerializer, UserSerializer
+
+User = get_user_model()
+
+# Endpoint: POST /api/auth/register/
+# Purpose: Anyone can access this endpoint to create an account
+class RegisterView(generics.CreateAPIView):
+    queryset = User.objects.all()
+    permission_classes = (AllowAny,)
+    serializer_class = UserRegisterSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        return Response({
+            "message": "User registered successfully",
+            "user": UserSerializer(user).data
+        }, status=status.HTTP_201_CREATED)
+
+# Endpoint: GET /api/auth/me/
+# Purpose: Fetch the details of the currently logged-in user (requires a valid JWT token)
+class UserMeView(generics.RetrieveUpdateAPIView):
+    serializer_class = UserSerializer
+    permission_classes = (IsAuthenticated,)
+
+    # Automatically fetch and return the logged-in user matching the JWT token
+    def get_object(self):
+        return self.request.user
+
+
+===================================================
+FILE: ai_engine\__init__.py
+===================================================
+
+
+===================================================
+FILE: ai_engine\admin.py
+===================================================
+from django.contrib import admin
+
+# Register your models here.
+
+
+
+===================================================
+FILE: ai_engine\apps.py
+===================================================
+from django.apps import AppConfig
+
+
+class AiEngineConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'ai_engine'
+
+
+
+===================================================
+FILE: ai_engine\models.py
+===================================================
+from django.db import models
+
+# Create your models here.
+
+
+
+===================================================
+FILE: ai_engine\services.py
+===================================================
+import os
+import json
+import logging
+from openai import OpenAI
+
+logger = logging.getLogger(__name__)
+
+class AIFitnessEngine:
+    """
+    A hybrid, production-grade AI Engine for personal health and fitness management.
+    Uses OpenAI's Chat Completion API with JSON formatting if an API key is present.
+    Falls back gracefully to a deterministic, rule-based expert system based on
+    validated physiological equations (Mifflin-St Jeor, Activity Multipliers, and Split Routines)
+    if the API key is not configured or fails.
+    """
+
+    def __init__(self):
+        # Retrieve the API key from environment variables
+        self.openai_key = os.environ.get("OPENAI_API_KEY", "")
+        self.groq_key = os.environ.get("GROQ_API_KEY", "")
+        
+        if self.groq_key:
+            # Use Groq API (fully compatible with OpenAI SDK)
+            self.client = OpenAI(
+                base_url="https://api.groq.com/openai/v1",
+                api_key=self.groq_key
+            )
+            self.model_name = "llama-3.3-70b-versatile" 
+        elif self.openai_key:
+            # Use OpenAI API
+            self.client = OpenAI(api_key=self.openai_key)
+            self.model_name = "gpt-4o-mini"
+        else:
+            self.client = None
+            self.model_name = None
+
+    def generate_plans(self, profile: dict, logs: list = None, burnout_alert: bool = False, plateau_alert: bool = False) -> dict:
+        """
+        Generates customized 7-day workout and diet plans.
+        :param profile: dict containing user physical metrics and goals.
+            Expected structure:
+            {
+                "gender": "male" | "female" | "other",
+                "age": int,
+                "height": float (in cm),
+                "weight": float (in kg),
+                "activity_level": "sedentary" | "lightly_active" | "moderately_active" | "very_active",
+                "fitness_goal": "weight_loss" | "muscle_gain" | "endurance" | "maintenance",
+                "dietary_restrictions": list of str (e.g., ["vegan", "gluten_free"]),
+                "medical_conditions": str (optional)
+            }
+        :param logs: list of recent activity logs (optional)
+        :param burnout_alert: boolean indicating if burnout was detected
+        :param plateau_alert: boolean indicating if a fitness plateau was detected
+        :return: dict containing structured 'workout_plan' and 'diet_plan'
+        """
+        # Clean and sanitize input parameters
+        profile = self._sanitize_profile(profile)
+
+        # Try to use OpenAI if API key exists
+        if self.client:
+            try:
+                return self._generate_via_openai(profile, logs, burnout_alert, plateau_alert)
+            except Exception as e:
+                logger.error(f"OpenAI generation failed: {str(e)}. Falling back to local expert system.")
+                # If LLM fails, proceed to fallback system
+
+        # Graceful fallback to deterministic physiological and training formulas
+        return self._generate_via_expert_system(profile, logs, burnout_alert, plateau_alert)
+
+    def _sanitize_profile(self, profile: dict) -> dict:
+        """Fills missing keys in profile with safe defaults."""
+        return {
+            "gender": profile.get("gender", "other").lower(),
+            "age": int(profile.get("age", 25)),
+            "height": float(profile.get("height", 170.0)),
+            "weight": float(profile.get("weight", 70.0)),
+            "activity_level": profile.get("activity_level", "moderately_active").lower(),
+            "fitness_goal": profile.get("fitness_goal", "maintenance").lower(),
+            "dietary_restrictions": [r.lower().strip() for r in profile.get("dietary_restrictions", [])],
+            "medical_conditions": profile.get("medical_conditions", "").strip()
+        }
+
+    def _generate_via_openai(self, profile: dict, logs: list, burnout_alert: bool, plateau_alert: bool) -> dict:
+        """Calls OpenAI Chat Completion to generate structured JSON plans."""
+        prompt = f"""
+You are an expert AI Fitness Coach and Sports Dietitian. Generate a highly customized, scientifically optimal 7-day Workout Plan and a matching 7-day Diet Plan for a user with the following profile:
+- Gender: {profile['gender']}
+- Age: {profile['age']} years
+- Height: {profile['height']} cm
+- Weight: {profile['weight']} kg
+- Activity Level: {profile['activity_level']}
+- Fitness Goal: {profile['fitness_goal']}
+- Dietary Restrictions: {', '.join(profile['dietary_restrictions']) if profile['dietary_restrictions'] else 'None'}
+- Medical Conditions: {profile['medical_conditions'] if profile['medical_conditions'] else 'None'}
+
+Context Flags:
+- Burnout Detected: {burnout_alert} (If True, generate a Deload and Active Recovery Plan focusing on stretching, mobility, walking, and stress relief, keeping training volume low to allow recovery).
+- Plateau Detected: {plateau_alert} (If True, adapt the plans to shock the body — cycle macros, introduce novel exercise variations, and alter sets/reps).
+
+You MUST output your response in STRICT JSON format matching the following structural schema exactly:
+{{
+  "workout_plan": {{
+    "title": "String (e.g. 'Hypertrophy Phase 1' or 'Active Recovery Deload')",
+    "target_goal": "String",
+    "weekly_sessions": [
+      {{
+        "day_of_week": "String (Monday, Tuesday, etc.)",
+        "session_name": "String (e.g. 'Push Day' or 'Full Body Conditioning' or 'Rest & Recovery')",
+        "exercises": [
+          {{
+            "name": "String",
+            "sets": Integer,
+            "reps": "String (e.g. '10-12' or '8')",
+            "rest_time": "String (e.g. '90 seconds')",
+            "order": Integer
+          }}
+        ]
+      }}
+    ]
+  }},
+  "diet_plan": {{
+    "title": "String (e.g. 'High-Protein Caloric Deficit Plan')",
+    "target_calories": Integer,
+    "target_protein": Integer,
+    "target_carbs": Integer,
+    "target_fats": Integer,
+    "meals": [
+      {{
+        "meal_time": "String (Breakfast, Lunch, Dinner, Snack)",
+        "name": "String (e.g. 'Oatmeal with Chia Seeds')",
+        "food_items": "String (ingredients summary)",
+        "calories": Integer,
+        "protein": Integer,
+        "carbs": Integer,
+        "fats": Integer
+      }}
+    ]
+  }}
+}}
+
+Make sure the sum of meal calories approximately equals the target_calories, and macronutrient targets align with the daily caloric intake (1g Protein = 4 kcal, 1g Carb = 4 kcal, 1g Fat = 9 kcal). Include meals matching the user's dietary restrictions. Do not output any conversational text or markdown codeblocks, output only raw valid JSON.
+"""
+        response = self.client.chat.completions.create(
+            model=self.model_name,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a professional fitness and diet planner returning structured JSON data."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7
+        )
+        
+        result_content = response.choices[0].message.content
+        return json.loads(result_content)
+
+    def _generate_via_expert_system(self, profile: dict, logs: list, burnout_alert: bool, plateau_alert: bool) -> dict:
+        """
+        A rule-based biological expert system calculating BMR, TDEE, macronutrient distributions,
+        and structuring workout routines according to fitness guidelines.
+        """
+        # 1. Calculate BMR (Mifflin-St Jeor Equation)
+        w, h, a = profile['weight'], profile['height'], profile['age']
+        if profile['gender'] == 'male':
+            bmr = 10 * w + 6.25 * h - 5 * a + 5
+        elif profile['gender'] == 'female':
+            bmr = 10 * w + 6.25 * h - 5 * a - 161
+        else:
+            bmr = 10 * w + 6.25 * h - 5 * a - 78 # Safe mid-point default
+
+        # 2. Apply Activity Multipliers
+        activity_multipliers = {
+            "sedentary": 1.2,
+            "lightly_active": 1.375,
+            "moderately_active": 1.55,
+            "very_active": 1.725
+        }
+        multiplier = activity_multipliers.get(profile['activity_level'], 1.55)
+        tdee = bmr * multiplier
+
+        # 3. Adjust Target Calories and Macros based on Goal, Burnout, and Plateau flags
+        goal = profile['fitness_goal']
+        
+        if burnout_alert:
+            # Focus on recovery: set calories to maintenance, low training intensity
+            target_calories = int(tdee)
+            diet_title = "Active Recovery & Restoration Fueling Plan"
+            protein_ratio, fat_ratio, carb_ratio = 0.25, 0.25, 0.50 # High carbs for central nervous system recovery
+        elif plateau_alert:
+            # Dynamic macro shift to break plateau
+            if goal == "weight_loss":
+                target_calories = int(tdee - 600) # Slightly deeper deficit or shift
+                protein_ratio, fat_ratio, carb_ratio = 0.40, 0.30, 0.30 # High protein/low carb shift
+                diet_title = "Plateau-Breaker High-Protein Deficit Plan"
+            elif goal == "muscle_gain":
+                target_calories = int(tdee + 400) # Deeper surplus
+                protein_ratio, fat_ratio, carb_ratio = 0.30, 0.25, 0.45 # Moderate carb cycling
+                diet_title = "Plateau-Breaker Clean Hypertrophy Surplus Plan"
+            else:
+                target_calories = int(tdee)
+                protein_ratio, fat_ratio, carb_ratio = 0.30, 0.30, 0.40
+                diet_title = "Plateau-Breaker Metabolic Reset Plan"
+        else:
+            # Normal goal adjustments
+            if goal == "weight_loss":
+                target_calories = int(tdee - 500)
+                protein_ratio, fat_ratio, carb_ratio = 0.35, 0.25, 0.40
+                diet_title = "Lean Fat Loss Nutrition Plan"
+            elif goal == "muscle_gain":
+                target_calories = int(tdee + 300)
+                protein_ratio, fat_ratio, carb_ratio = 0.25, 0.25, 0.50
+                diet_title = "Optimal Muscle Building Surplus Plan"
+            elif goal == "endurance":
+                target_calories = int(tdee) # Maintenance with higher carbs
+                protein_ratio, fat_ratio, carb_ratio = 0.20, 0.25, 0.55
+                diet_title = "Aerobic Fueling Endurance Plan"
+            else:
+                target_calories = int(tdee)
+                protein_ratio, fat_ratio, carb_ratio = 0.25, 0.25, 0.50
+                diet_title = "Balanced Maintenance Nutrition Plan"
+
+        # Safe boundaries (never drop below healthy biological floors)
+        if target_calories < 1200:
+            target_calories = 1200
+
+        # Calculate exact macronutrients
+        target_protein = int((target_calories * protein_ratio) / 4)
+        target_fats = int((target_calories * fat_ratio) / 9)
+        target_carbs = int((target_calories * carb_ratio) / 4)
+
+        # 4. Generate Diet Meals according to Dietary Restrictions
+        meals = self._generate_meals_for_diet(target_calories, target_protein, target_carbs, target_fats, profile['dietary_restrictions'])
+
+        # 5. Generate Weekly Workout Sessions
+        workout_plan = self._generate_workouts_for_routine(goal, burnout_alert, plateau_alert)
+
+        return {
+            "workout_plan": workout_plan,
+            "diet_plan": {
+                "title": diet_title,
+                "target_calories": target_calories,
+                "target_protein": target_protein,
+                "target_carbs": target_carbs,
+                "target_fats": target_fats,
+                "meals": meals
+            }
+        }
+
+    def _generate_meals_for_diet(self, calories: int, protein: int, carbs: int, fats: int, restrictions: list) -> list:
+        """Assembles 4 cohesive daily meals adapted to calories and dietary restrictions."""
+        is_vegan = "vegan" in restrictions
+        is_vegetarian = "vegetarian" in restrictions or is_vegan
+        is_gluten_free = "gluten_free" in restrictions or "gluten free" in restrictions
+        is_keto = "keto" in restrictions
+
+        # Baseline Meal Templates
+        # Divide calories: Breakfast 25%, Lunch 35%, Dinner 30%, Snack 10%
+        c_bf, c_lh, c_dn, c_sk = int(calories * 0.25), int(calories * 0.35), int(calories * 0.30), int(calories * 0.10)
+        p_bf, p_lh, p_dn, p_sk = int(protein * 0.25), int(protein * 0.35), int(protein * 0.30), int(protein * 0.10)
+        cb_bf, cb_lh, cb_dn, cb_sk = int(carbs * 0.25), int(carbs * 0.35), int(carbs * 0.30), int(carbs * 0.10)
+        f_bf, f_lh, f_dn, f_sk = int(fats * 0.25), int(fats * 0.35), int(fats * 0.30), int(fats * 0.10)
+
+        # 1. Breakfast Selection
+        if is_keto:
+            bf_name = "Keto Avocado and Eggs Scramble"
+            bf_items = "3 Large Eggs, 1/2 Medium Avocado, 1 tbsp Olive Oil, Spinach, Mushrooms"
+        elif is_vegan:
+            bf_name = "High-Protein Vegan Berry Oatmeal"
+            bf_items = f"45g Oats, 1 scoop Vegan Protein Powder, 120ml Soy Milk, 50g Blueberries, 1 tbsp Chia Seeds"
+        elif is_vegetarian:
+            bf_name = "Greek Yogurt and Honey Bowl"
+            bf_items = "200g Non-fat Greek Yogurt, 1 tbsp Honey, 30g Almonds, 100g Sliced Strawberries"
+        elif is_gluten_free:
+            bf_name = "Gluten-Free Eggs & Sweet Potato Hash"
+            bf_items = "2 Large Eggs, 100g Sweet Potato Cubes, Spinach, Sautéed with Coconut Oil"
+        else:
+            bf_name = "Classic Egg & Toast Breakfast"
+            bf_items = "2 Whole Eggs, 2 Slices Whole Wheat Toast, 1 tsp Butter, 1 Medium Banana"
+
+        # 2. Lunch Selection
+        if is_keto:
+            lh_name = "Keto Salmon & Asparagus Platter"
+            lh_items = "150g Grilled Salmon, 100g Roasted Asparagus in Butter, Garden Salad with Olive Oil Dressing"
+        elif is_vegan:
+            lh_name = "Tofu Quinoa & Buddha Bowl"
+            lh_items = "150g Firm Tofu, 80g Cooked Quinoa, Steamed Broccoli, Carrots, Tahini Dressing"
+        elif is_vegetarian:
+            lh_name = "Mediterranean Chickpea & Feta Salad"
+            lh_items = "150g Chickpeas, 50g Feta Cheese, Cucumbers, Tomatoes, Olives, Vinaigrette Dressing"
+        elif is_gluten_free:
+            lh_name = "Grilled Chicken & Brown Rice Bowl"
+            lh_items = "150g Grilled Chicken Breast, 100g Cooked Brown Rice, Sautéed Bell Peppers, Olive Oil"
+        else:
+            lh_name = "Turkey and Avocado Whole Wheat Wrap"
+            lh_items = "1 Large Whole Wheat Tortilla, 120g Sliced Turkey Breast, 1/4 Avocado, Lettuce, Tomato, Mustard"
+
+        # 3. Dinner Selection
+        if is_keto:
+            dn_name = "Keto Ribeye Steak & Cauliflower Mash"
+            dn_items = "180g Ribeye Steak, 150g Cauliflower Puree with Heavy Cream, Sautéed Garlic Spinach"
+        elif is_vegan:
+            dn_name = "Hearty Lentil & Vegetable Stew"
+            dn_items = "150g Cooked Brown Lentils, Zucchini, Tomatoes, Onions, 1 Slice Gluten-Free/Vegan Bread"
+        elif is_vegetarian:
+            dn_name = "Tempeh Stir-Fry with Jasmine Rice"
+            dn_items = "150g Marinated Tempeh, Mixed Stir-fry Veggies (Snow peas, Peppers), 100g Cooked Jasmine Rice"
+        elif is_gluten_free:
+            dn_name = "Baked Salmon & Sweet Potato Mash"
+            dn_items = "150g Baked Salmon, 120g Sweet Potato Mash, Roasted Green Beans in Olive Oil"
+        else:
+            dn_name = "Lean Beef Stir-Fry with Rice"
+            dn_items = "150g Lean Ground Beef, 100g Cooked Brown Rice, Mixed Vegetables (Broccoli, Carrots), Soy Sauce"
+
+        # 4. Snack Selection
+        if is_keto:
+            sk_name = "Keto Mixed Nut Mix"
+            sk_items = "30g Macadamia Nuts, Pecans, and Walnuts"
+        elif is_vegan:
+            sk_name = "Hummus & Carrot Sticks"
+            sk_items = "4 tbsp Garlic Hummus, 100g Baby Carrots, Cucumber Slices"
+        elif is_vegetarian:
+            sk_name = "Cottage Cheese & Pineapple Bowl"
+            sk_items = "150g Low-fat Cottage Cheese, 50g Pineapple Chunks"
+        elif is_gluten_free:
+            sk_name = "Gluten-Free Rice Cakes & Peanut Butter"
+            sk_items = "2 Plain Rice Cakes, 1.5 tbsp Creamy Peanut Butter"
+        else:
+            sk_name = "Protein Shake & Apple"
+            sk_items = "1 Scoop Whey Protein, 250ml Skim Milk, 1 Medium Red Apple"
+
+        return [
+            {"meal_time": "Breakfast", "name": bf_name, "food_items": bf_items, "calories": c_bf, "protein": p_bf, "carbs": cb_bf, "fats": f_bf},
+            {"meal_time": "Lunch", "name": lh_name, "food_items": lh_items, "calories": c_lh, "protein": p_lh, "carbs": cb_lh, "fats": f_lh},
+            {"meal_time": "Dinner", "name": dn_name, "food_items": dn_items, "calories": c_dn, "protein": p_dn, "carbs": cb_dn, "fats": f_dn},
+            {"meal_time": "Snack", "name": sk_name, "food_items": sk_items, "calories": c_sk, "protein": p_sk, "carbs": cb_sk, "fats": f_sk}
+        ]
+
+    def _generate_workouts_for_routine(self, goal: str, burnout_alert: bool, plateau_alert: bool) -> dict:
+        """Assembles a full 7-day weekly training split adapted to goals and alert states."""
+        
+        if burnout_alert:
+            # Deload, Stretch, Active Recovery
+            title = "Active Recovery & Mobility Deload Phase"
+            target_goal = "Nervous System Recovery & Active Rest"
+            
+            sessions = [
+                {
+                    "day_of_week": "Monday",
+                    "session_name": "Full-Body Mobility & Yoga",
+                    "exercises": [
+                        {"name": "Dynamic Joint Warm-up", "sets": 1, "reps": "10 mins", "rest_time": "No rest", "order": 1},
+                        {"name": "Vinyasa Flow Yoga (Low Intensity)", "sets": 1, "reps": "30 mins", "rest_time": "No rest", "order": 2},
+                        {"name": "Child's Pose & Hamstring Stretch", "sets": 3, "reps": "45s hold", "rest_time": "30s", "order": 3}
+                    ]
+                },
+                {
+                    "day_of_week": "Tuesday",
+                    "session_name": "Active Recovery Walk",
+                    "exercises": [
+                        {"name": "Outdoor Steady-State Walking (Zone 1)", "sets": 1, "reps": "40 mins", "rest_time": "No rest", "order": 1},
+                        {"name": "Deep Breathing Exercises", "sets": 1, "reps": "5 mins", "rest_time": "No rest", "order": 2}
+                    ]
+                },
+                {
+                    "day_of_week": "Wednesday",
+                    "session_name": "Rest Day",
+                    "exercises": []
+                },
+                {
+                    "day_of_week": "Thursday",
+                    "session_name": "Foam Rolling & Deep Tissue Release",
+                    "exercises": [
+                        {"name": "Full Body Foam Rolling", "sets": 1, "reps": "20 mins", "rest_time": "No rest", "order": 1},
+                        {"name": "Static Stretching Routine (Quads, Calves, Back)", "sets": 3, "reps": "30s hold", "rest_time": "15s", "order": 2}
+                    ]
+                },
+                {
+                    "day_of_week": "Friday",
+                    "session_name": "Light Core & Joint Prehab",
+                    "exercises": [
+                        {"name": "Bird-Dog", "sets": 3, "reps": "10 per side", "rest_time": "45s", "order": 1},
+                        {"name": "Glute Bridges (Bodyweight)", "sets": 3, "reps": "15", "rest_time": "45s", "order": 2},
+                        {"name": "Plank", "sets": 3, "reps": "30-45s", "rest_time": "60s", "order": 3}
+                    ]
+                },
+                {
+                    "day_of_week": "Saturday",
+                    "session_name": "Zone 2 Low-Intensity Cardio",
+                    "exercises": [
+                        {"name": "Stationary Cycling (Light Effort)", "sets": 1, "reps": "30 mins", "rest_time": "No rest", "order": 1}
+                    ]
+                },
+                {
+                    "day_of_week": "Sunday",
+                    "session_name": "Complete Rest Day",
+                    "exercises": []
+                }
+            ]
+
+        elif plateau_alert:
+            # Change exercises, set schemes, and add intensity techniques to break plateau
+            title = "Plateau-Busting High-Intensity Shock Routine"
+            target_goal = "Overcoming Physiological Stagnation"
+            
+            sessions = [
+                {
+                    "day_of_week": "Monday",
+                    "session_name": "Push Day A (Plateau-Breaker: Rest-Pause Sets)",
+                    "exercises": [
+                        {"name": "Incline Dumbbell Press (Rest-Pause Technique)", "sets": 4, "reps": "8 + 3 + 2", "rest_time": "120s", "order": 1},
+                        {"name": "Standing Overhead Press", "sets": 3, "reps": "6", "rest_time": "90s", "order": 2},
+                        {"name": "Weighted Chest Dips", "sets": 3, "reps": "8-10", "rest_time": "90s", "order": 3},
+                        {"name": "Cable Lateral Raise (Superset)", "sets": 4, "reps": "15", "rest_time": "No rest", "order": 4},
+                        {"name": "Dumbbell Overhead Tricep Extension", "sets": 4, "reps": "12", "rest_time": "60s", "order": 5}
+                    ]
+                },
+                {
+                    "day_of_week": "Tuesday",
+                    "session_name": "Pull Day A (Plateau-Breaker: Eccentric Overloads)",
+                    "exercises": [
+                        {"name": "Barbell Rows (5-second eccentric/lowering)", "sets": 4, "reps": "8", "rest_time": "90s", "order": 1},
+                        {"name": "Weighted Pull-Ups", "sets": 3, "reps": "Max reps", "rest_time": "120s", "order": 2},
+                        {"name": "Seated Cable Rows (Wide Grip)", "sets": 3, "reps": "12 (Drop set on last)", "rest_time": "90s", "order": 3},
+                        {"name": "Face Pulls", "sets": 4, "reps": "15-20", "rest_time": "60s", "order": 4},
+                        {"name": "Incline Dumbbell Bicep Curls", "sets": 3, "reps": "10-12", "rest_time": "60s", "order": 5}
+                    ]
+                },
+                {
+                    "day_of_week": "Wednesday",
+                    "session_name": "Active Recovery & Mobility",
+                    "exercises": [
+                        {"name": "Foam Rolling & Deep Stretching", "sets": 1, "reps": "15 mins", "rest_time": "No rest", "order": 1}
+                    ]
+                },
+                {
+                    "day_of_week": "Thursday",
+                    "session_name": "Leg Day (Plateau-Breaker: German Volume Training)",
+                    "exercises": [
+                        {"name": "Barbell Back Squats", "sets": 10, "reps": "10", "rest_time": "60s", "order": 1},
+                        {"name": "Romanian Deadlifts", "sets": 4, "reps": "8", "rest_time": "90s", "order": 2},
+                        {"name": "Leg Extensions (Superset)", "sets": 3, "reps": "15", "rest_time": "No rest", "order": 3},
+                        {"name": "Seated Leg Curls", "sets": 3, "reps": "15", "rest_time": "60s", "order": 4},
+                        {"name": "Standing Calf Raises", "sets": 4, "reps": "20", "rest_time": "45s", "order": 5}
+                    ]
+                },
+                {
+                    "day_of_week": "Friday",
+                    "session_name": "Upper Body Power Split",
+                    "exercises": [
+                        {"name": "Flat Barbell Bench Press", "sets": 4, "reps": "5", "rest_time": "120s", "order": 1},
+                        {"name": "Lat Pulldowns", "sets": 4, "reps": "8", "rest_time": "90s", "order": 2},
+                        {"name": "Dumbbell Shoulder Press", "sets": 3, "reps": "8", "rest_time": "90s", "order": 3},
+                        {"name": "Hammer Curls", "sets": 3, "reps": "12", "rest_time": "60s", "order": 4}
+                    ]
+                },
+                {
+                    "day_of_week": "Saturday",
+                    "session_name": "HIIT Conditioning Cardiorespiratory Shock",
+                    "exercises": [
+                        {"name": "Sprinting Intervals (30s sprint, 60s walk)", "sets": 10, "reps": "15 mins total", "rest_time": "60s", "order": 1},
+                        {"name": "Hanging Knee Raises", "sets": 3, "reps": "15", "rest_time": "45s", "order": 2}
+                    ]
+                },
+                {
+                    "day_of_week": "Sunday",
+                    "session_name": "Rest Day",
+                    "exercises": []
+                }
+            ]
+
+        else:
+            # Normal goal-based splits
+            if goal == "weight_loss":
+                title = "High-Intensity Full Body Metabolic Split"
+                target_goal = "Caloric Expenditure & Lean Muscle Retention"
+                
+                sessions = [
+                    {
+                        "day_of_week": "Monday",
+                        "session_name": "Full Body Resistance & Conditioning A",
+                        "exercises": [
+                            {"name": "Goblet Squats", "sets": 3, "reps": "12-15", "rest_time": "60s", "order": 1},
+                            {"name": "Push-Ups (or Incline Pushups)", "sets": 3, "reps": "12-15", "rest_time": "60s", "order": 2},
+                            {"name": "Dumbbell Rows", "sets": 3, "reps": "12-15", "rest_time": "60s", "order": 3},
+                            {"name": "Kettlebell Swings", "sets": 4, "reps": "20", "rest_time": "60s", "order": 4},
+                            {"name": "Plank with Shoulder Taps", "sets": 3, "reps": "45s", "rest_time": "45s", "order": 5}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Tuesday",
+                        "session_name": "Steady-State Cardio Zone 2",
+                        "exercises": [
+                            {"name": "Moderate Treadmill Incline Walk", "sets": 1, "reps": "45 mins", "rest_time": "No rest", "order": 1}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Wednesday",
+                        "session_name": "Full Body Resistance & Conditioning B",
+                        "exercises": [
+                            {"name": "Romanian Deadlifts", "sets": 3, "reps": "12", "rest_time": "60s", "order": 1},
+                            {"name": "Seated Dumbbell Shoulder Press", "sets": 3, "reps": "12", "rest_time": "60s", "order": 2},
+                            {"name": "Lat Pulldowns", "sets": 3, "reps": "12", "rest_time": "60s", "order": 3},
+                            {"name": "Dumbbell Lunge Walk", "sets": 3, "reps": "10 per leg", "rest_time": "60s", "order": 4},
+                            {"name": "Hanging Knee Raises", "sets": 3, "reps": "15", "rest_time": "45s", "order": 5}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Thursday",
+                        "session_name": "Rest & Mobility Day",
+                        "exercises": [
+                            {"name": "Full Body Static Stretching", "sets": 1, "reps": "15 mins", "rest_time": "No rest", "order": 1}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Friday",
+                        "session_name": "Full Body Resistance & Conditioning C",
+                        "exercises": [
+                            {"name": "Leg Press", "sets": 3, "reps": "15", "rest_time": "60s", "order": 1},
+                            {"name": "Dumbbell Chest Flys", "sets": 3, "reps": "12", "rest_time": "60s", "order": 2},
+                            {"name": "Face Pulls", "sets": 3, "reps": "15", "rest_time": "45s", "order": 3},
+                            {"name": "Medicine Ball Slams", "sets": 4, "reps": "15", "rest_time": "45s", "order": 4},
+                            {"name": "Bicycle Crunches", "sets": 3, "reps": "20 per side", "rest_time": "45s", "order": 5}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Saturday",
+                        "session_name": "Interval Cardio (HIIT)",
+                        "exercises": [
+                            {"name": "Elliptical HIIT Intervals (20s sprint, 40s moderate)", "sets": 15, "reps": "15 mins total", "rest_time": "40s", "order": 1}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Sunday",
+                        "session_name": "Complete Rest Day",
+                        "exercises": []
+                    }
+                ]
+
+            elif goal == "muscle_gain":
+                title = "Hypertrophy Push-Pull-Legs Routine"
+                target_goal = "Sarcoplasmic Muscle Hypertrophy & Strength"
+                
+                sessions = [
+                    {
+                        "day_of_week": "Monday",
+                        "session_name": "Push Day (Chest, Shoulders, Triceps)",
+                        "exercises": [
+                            {"name": "Flat Dumbbell Bench Press", "sets": 4, "reps": "8-10", "rest_time": "90s", "order": 1},
+                            {"name": "Seated Barbell Overhead Press", "sets": 3, "reps": "8-10", "rest_time": "90s", "order": 2},
+                            {"name": "Incline Dumbbell Flys", "sets": 3, "reps": "10-12", "rest_time": "90s", "order": 3},
+                            {"name": "Dumbbell Lateral Raises", "sets": 4, "reps": "12-15", "rest_time": "60s", "order": 4},
+                            {"name": "Rope Tricep Pushdowns", "sets": 3, "reps": "12-15", "rest_time": "60s", "order": 5}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Tuesday",
+                        "session_name": "Pull Day (Back, Rear Delts, Biceps)",
+                        "exercises": [
+                            {"name": "Barbell Deadlifts", "sets": 3, "reps": "5", "rest_time": "120s", "order": 1},
+                            {"name": "Lat Pulldowns (Wide Grip)", "sets": 4, "reps": "8-10", "rest_time": "90s", "order": 2},
+                            {"name": "Seated Cable Rows", "sets": 3, "reps": "10-12", "rest_time": "90s", "order": 3},
+                            {"name": "Face Pulls", "sets": 3, "reps": "15", "rest_time": "60s", "order": 4},
+                            {"name": "Barbell Bicep Curls", "sets": 3, "reps": "10-12", "rest_time": "60s", "order": 5}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Wednesday",
+                        "session_name": "Rest Day",
+                        "exercises": []
+                    },
+                    {
+                        "day_of_week": "Thursday",
+                        "session_name": "Leg Day (Quads, Hamstrings, Calves)",
+                        "exercises": [
+                            {"name": "Barbell Back Squats", "sets": 4, "reps": "6-8", "rest_time": "120s", "order": 1},
+                            {"name": "Romanian Deadlifts", "sets": 4, "reps": "10", "rest_time": "90s", "order": 2},
+                            {"name": "Dumbbell Bulgarian Split Squats", "sets": 3, "reps": "10 per leg", "rest_time": "90s", "order": 3},
+                            {"name": "Seated Calf Raises", "sets": 4, "reps": "15", "rest_time": "60s", "order": 4}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Friday",
+                        "session_name": "Upper Body Hypertrophy Split",
+                        "exercises": [
+                            {"name": "Incline Barbell Chest Press", "sets": 4, "reps": "10", "rest_time": "90s", "order": 1},
+                            {"name": "Single Arm Dumbbell Rows", "sets": 3, "reps": "10 per side", "rest_time": "90s", "order": 2},
+                            {"name": "Dumbbell Arnold Press", "sets": 3, "reps": "10-12", "rest_time": "90s", "order": 3},
+                            {"name": "Incline Dumbbell Curls (Superset)", "sets": 3, "reps": "12", "rest_time": "No rest", "order": 4},
+                            {"name": "Dumbbell Hammer Curls", "sets": 3, "reps": "12", "rest_time": "60s", "order": 5}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Saturday",
+                        "session_name": "Active Recovery & Core Day",
+                        "exercises": [
+                            {"name": "Steady Outdoor Jogging", "sets": 1, "reps": "25 mins", "rest_time": "No rest", "order": 1},
+                            {"name": "Hanging Leg Raises", "sets": 3, "reps": "12-15", "rest_time": "45s", "order": 2},
+                            {"name": "Ab Wheel Rollouts", "sets": 3, "reps": "10", "rest_time": "60s", "order": 3}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Sunday",
+                        "session_name": "Complete Rest Day",
+                        "exercises": []
+                    }
+                ]
+
+            elif goal == "endurance":
+                title = "Aerobic Base & Endurance Conditioning Plan"
+                target_goal = "VO2 Max Improvement & Muscle Fatigue Resistance"
+                
+                sessions = [
+                    {
+                        "day_of_week": "Monday",
+                        "session_name": "Tempo Aerobic Jogging",
+                        "exercises": [
+                            {"name": "Outdoor Jogging (Steady pace - Zone 3)", "sets": 1, "reps": "45 mins", "rest_time": "No rest", "order": 1}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Tuesday",
+                        "session_name": "High-Rep Muscle Endurance Circuit",
+                        "exercises": [
+                            {"name": "Bodyweight Squats", "sets": 3, "reps": "25", "rest_time": "30s", "order": 1},
+                            {"name": "Dumbbell Shoulder Press (Light)", "sets": 3, "reps": "20", "rest_time": "30s", "order": 2},
+                            {"name": "TRX/Cable Rows", "sets": 3, "reps": "20", "rest_time": "30s", "order": 3},
+                            {"name": "Mountain Climbers", "sets": 3, "reps": "45 seconds", "rest_time": "30s", "order": 4},
+                            {"name": "Plank Hold", "sets": 3, "reps": "60 seconds", "rest_time": "45s", "order": 5}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Wednesday",
+                        "session_name": "Active Recovery Cycling",
+                        "exercises": [
+                            {"name": "Light Stationary Cycling (Zone 1-2)", "sets": 1, "reps": "40 mins", "rest_time": "No rest", "order": 1}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Thursday",
+                        "session_name": "Interval Running (VO2 Max Builder)",
+                        "exercises": [
+                            {"name": "Running Warm-Up Pace", "sets": 1, "reps": "10 mins", "rest_time": "No rest", "order": 1},
+                            {"name": "800m Repeats (Hard effort)", "sets": 5, "reps": "800 meters each", "rest_time": "3 mins jog rest", "order": 2},
+                            {"name": "Running Cool-Down Stretch", "sets": 1, "reps": "10 mins", "rest_time": "No rest", "order": 3}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Friday",
+                        "session_name": "Core and Core Endurance",
+                        "exercises": [
+                            {"name": "Plank", "sets": 3, "reps": "60s", "rest_time": "45s", "order": 1},
+                            {"name": "Side Plank", "sets": 3, "reps": "45s per side", "rest_time": "30s", "order": 2},
+                            {"name": "Supermans", "sets": 3, "reps": "15", "rest_time": "45s", "order": 3}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Saturday",
+                        "session_name": "Long Slow Distance (LSD) Cardio",
+                        "exercises": [
+                            {"name": "Long Distance Cycling or Trail Run", "sets": 1, "reps": "75 mins (Zone 2)", "rest_time": "No rest", "order": 1}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Sunday",
+                        "session_name": "Complete Rest Day",
+                        "exercises": []
+                    }
+                ]
+
+            else:
+                # Default Balanced Routine
+                title = "Balanced Fitness Maintenance Routine"
+                target_goal = "Overall Health, Strength & Cardiovascular Vitality"
+                
+                sessions = [
+                    {
+                        "day_of_week": "Monday",
+                        "session_name": "Upper Body Balanced Day",
+                        "exercises": [
+                            {"name": "Dumbbell Bench Press", "sets": 3, "reps": "10", "rest_time": "90s", "order": 1},
+                            {"name": "Seated Lat Pulldown", "sets": 3, "reps": "10", "rest_time": "90s", "order": 2},
+                            {"name": "Overhead Dumbbell Press", "sets": 3, "reps": "10", "rest_time": "90s", "order": 3},
+                            {"name": "Bicep Curls (Superset)", "sets": 3, "reps": "12", "rest_time": "No rest", "order": 4},
+                            {"name": "Tricep Pushdowns", "sets": 3, "reps": "12", "rest_time": "60s", "order": 5}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Tuesday",
+                        "session_name": "Steady State Jogging",
+                        "exercises": [
+                            {"name": "Outdoor Jogging", "sets": 1, "reps": "30 mins", "rest_time": "No rest", "order": 1}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Wednesday",
+                        "session_name": "Lower Body Balanced Day",
+                        "exercises": [
+                            {"name": "Leg Press", "sets": 3, "reps": "10", "rest_time": "90s", "order": 1},
+                            {"name": "Leg Curls", "sets": 3, "reps": "12", "rest_time": "60s", "order": 2},
+                            {"name": "Goblet Squats", "sets": 3, "reps": "12", "rest_time": "90s", "order": 3},
+                            {"name": "Standing Calf Raises", "sets": 3, "reps": "15", "rest_time": "45s", "order": 4}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Thursday",
+                        "session_name": "Rest Day",
+                        "exercises": []
+                    },
+                    {
+                        "day_of_week": "Friday",
+                        "session_name": "Active Mobility & Yoga",
+                        "exercises": [
+                            {"name": "Vinyasa Yoga Flow", "sets": 1, "reps": "30 mins", "rest_time": "No rest", "order": 1}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Saturday",
+                        "session_name": "Light Cardio and Core",
+                        "exercises": [
+                            {"name": "Brisk Walking on Incline", "sets": 1, "reps": "30 mins", "rest_time": "No rest", "order": 1},
+                            {"name": "Plank Hold", "sets": 3, "reps": "45s", "rest_time": "45s", "order": 2}
+                        ]
+                    },
+                    {
+                        "day_of_week": "Sunday",
+                        "session_name": "Rest Day",
+                        "exercises": []
+                    }
+                ]
+
+        return {
+            "title": title,
+            "target_goal": target_goal,
+            "weekly_sessions": sessions
+        }
+
+
+# --- CONVERSATIONAL AI ASSISTANT (used by /api/ai/chat/, separate from plan generation) ---
+
+def get_ai_chat_reply(message: str, history: list = None) -> str:
+    """
+    Conversational counterpart to AIFitnessEngine.generate_plans — reuses the
+    same Groq -> OpenAI -> fallback pattern, but for open-ended fitness Q&A
+    instead of structured plan JSON.
+    """
+    engine = AIFitnessEngine()
+    history = history or []
+
+    if engine.client:
+        try:
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are PulseFit AI, a friendly, knowledgeable fitness and nutrition "
+                        "coach embedded in a fitness app. Give clear, encouraging, safe advice. "
+                        "Keep responses concise (a few sentences to a short paragraph) unless the "
+                        "user asks for more detail. Avoid medical diagnoses; suggest seeing a "
+                        "doctor for medical concerns."
+                    ),
+                },
+            ]
+            for turn in history[-10:]:
+                role = turn.get("role")
+                content = turn.get("content")
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content})
+            messages.append({"role": "user", "content": message})
+
+            response = engine.client.chat.completions.create(
+                model=engine.model_name,
+                messages=messages,
+                temperature=0.7,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"AI chat reply failed: {str(e)}. Falling back to canned response.")
+
+    return _fallback_chat_reply(message)
+
+
+def _fallback_chat_reply(message: str) -> str:
+    """Deterministic, keyword-based reply used when no AI provider is
+    configured or the API call fails — keeps the assistant usable offline."""
+    text = message.lower()
+
+    if any(word in text for word in ["burnout", "tired", "exhausted", "fatigue"]):
+        return (
+            "High fatigue for several days in a row is your body asking for a lighter week. "
+            "Prioritize sleep, cut training volume by 30-50%, and keep moving with easy walks "
+            "or mobility work instead of full rest days."
+        )
+    if any(word in text for word in ["plateau", "stuck", "not losing", "stalled"]):
+        return (
+            "Plateaus usually mean your body has adapted to your current calories or training "
+            "stimulus. Try adjusting your calorie target by about 10%, or change up your rep "
+            "ranges and exercise selection for 2-3 weeks."
+        )
+    if any(word in text for word in ["protein", "macro", "diet", "calorie", "nutrition"]):
+        return (
+            "As a rough guide, aim for 1.6-2.2g of protein per kg of bodyweight if you're "
+            "training regularly, and build your calories around your goal (deficit for fat "
+            "loss, surplus for muscle gain). Check your active diet plan on the Plans page for "
+            "your personal targets."
+        )
+    if any(word in text for word in ["injury", "pain", "hurt", "doctor"]):
+        return (
+            "I can't diagnose pain or injuries. If something hurts beyond normal muscle "
+            "soreness, please stop that movement and check in with a doctor or physiotherapist "
+            "before continuing."
+        )
+
+    return (
+        "I'm your PulseFit AI assistant. Ask me about your workout plan, nutrition targets, "
+        "recovery, or anything about staying consistent with your fitness goals."
+    )
+
+
+
+===================================================
+FILE: ai_engine\tests.py
+===================================================
+from django.test import TestCase
+
+# Create your tests here.
+
+
+
+===================================================
+FILE: ai_engine\urls.py
+===================================================
+from django.urls import path
+from .views import AIChatView
+
+urlpatterns = [
+    path('chat/', AIChatView.as_view(), name='ai_chat'),
+]
+
+
+
+===================================================
+FILE: ai_engine\views.py
+===================================================
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+
+from .services import get_ai_chat_reply
+
+
+class AIChatView(APIView):
+    """
+    POST /api/ai/chat/
+    body: { message: str, history?: [{role: "user"|"assistant", content: str}] }
+    -> { reply: str }
+
+    Powers both the floating AIChatWidget and the "PulseFit AI" tab inside
+    the Chat page on the frontend — reuses AIFitnessEngine's Groq/OpenAI/
+    fallback chain (ai_engine.services) but for conversational replies
+    instead of structured workout/diet JSON.
+    """
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request, *args, **kwargs):
+        message = (request.data.get('message') or '').strip()
+        if not message:
+            return Response({"detail": "message is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        history = request.data.get('history', [])
+        if not isinstance(history, list):
+            history = []
+
+        reply = get_ai_chat_reply(message, history)
+        return Response({"reply": reply}, status=status.HTTP_200_OK)
+
+
+
+===================================================
+FILE: fitness\__init__.py
+===================================================
+
+
+===================================================
+FILE: fitness\admin.py
+===================================================
+from django.contrib import admin
+from .models import PersonalHealthProfile, WorkoutPlan, WorkoutSession, Exercise, DietPlan, Meal, DailyLog, WorkoutLog, Alert, TrainerRelationship
+
+@admin.register(PersonalHealthProfile)
+class PersonalHealthProfileAdmin(admin.ModelAdmin):
+    list_display = ['user', 'gender', 'age', 'height', 'weight', 'activity_level', 'fitness_goal']
+    search_fields = ['user__email']
+
+@admin.register(WorkoutPlan)
+class WorkoutPlanAdmin(admin.ModelAdmin):
+    list_display = ['user', 'title', 'target_goal', 'is_active', 'is_ai_generated', 'created_at']
+    list_filter = ['is_active', 'is_ai_generated']
+    search_fields = ['user__email']
+
+@admin.register(DietPlan)
+class DietPlanAdmin(admin.ModelAdmin):
+    list_display = ['user', 'title', 'target_calories', 'is_active', 'is_ai_generated', 'created_at']
+    list_filter = ['is_active', 'is_ai_generated']
+    search_fields = ['user__email']
+
+@admin.register(DailyLog)
+class DailyLogAdmin(admin.ModelAdmin):
+    list_display = ['user', 'date', 'weight_logged', 'water_intake', 'calories_consumed', 'fatigue_level']
+    list_filter = ['date']
+    search_fields = ['user__email']
+
+@admin.register(Alert)
+class AlertAdmin(admin.ModelAdmin):
+    list_display = ['user', 'type', 'status', 'created_at']
+    list_filter = ['type', 'status']
+    search_fields = ['user__email']
+
+@admin.register(TrainerRelationship)
+class TrainerRelationshipAdmin(admin.ModelAdmin):
+    list_display = ['trainer', 'client', 'is_active', 'created_at']
+    list_filter = ['is_active']
+    search_fields = ['trainer__email', 'client__email']
+
+admin.site.register(WorkoutSession)
+admin.site.register(Exercise)
+admin.site.register(Meal)
+admin.site.register(WorkoutLog)
+
+
+===================================================
+FILE: fitness\apps.py
+===================================================
+from django.apps import AppConfig
+
+
+class FitnessConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'fitness'
+
+
+
+===================================================
+FILE: fitness\channels_auth.py
+===================================================
+"""
+Channels doesn't know about DRF/SimpleJWT auth out of the box — WebSocket
+connections don't carry an Authorization header the way normal fetches do,
+so the frontend (see src/api/socket.js) puts the access token on the query
+string instead: ws://.../ws/chat/<id>/?token=<accessToken>
+
+This middleware pulls that token out, validates it exactly the way
+JWTAuthentication does for regular API views, and attaches the resulting
+user to scope["user"] so consumers can use it like request.user.
+"""
+
+from urllib.parse import parse_qs
+
+from channels.db import database_sync_to_async
+from django.contrib.auth.models import AnonymousUser
+from rest_framework_simplejwt.tokens import AccessToken
+from rest_framework_simplejwt.exceptions import TokenError
+
+
+@database_sync_to_async
+def _get_user_from_token(token):
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    try:
+        validated_token = AccessToken(token)
+        user_id = validated_token['user_id']
+        return User.objects.get(id=user_id)
+    except (TokenError, KeyError, Exception):
+        return AnonymousUser()
+
+
+class JWTAuthMiddleware:
+    """ASGI middleware — wraps the inner application (URLRouter) and injects
+    scope["user"] before the connection reaches a consumer."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        query_string = scope.get('query_string', b'').decode()
+        query_params = parse_qs(query_string)
+        token = query_params.get('token', [None])[0]
+
+        scope['user'] = await _get_user_from_token(token) if token else AnonymousUser()
+
+        return await self.inner(scope, receive, send)
+
+
+
+===================================================
+FILE: fitness\consumers.py
+===================================================
+import json
+
+from channels.generic.websocket import AsyncWebsocketConsumer
+from channels.db import database_sync_to_async
+from django.db.models import Q
+
+from .models import Conversation, Message
+
+
+class ChatConsumer(AsyncWebsocketConsumer):
+    """
+    One consumer instance per open WebSocket connection, scoped to a single
+    conversation. Messages sent here are persisted to Postgres immediately
+    (so REST history via ConversationMessagesView stays consistent) and then
+    broadcast to every connection subscribed to the same conversation's group.
+    """
+
+    async def connect(self):
+        self.conversation_id = self.scope['url_route']['kwargs']['conversation_id']
+        self.group_name = f'chat_{self.conversation_id}'
+        user = self.scope.get('user')
+
+        if not user or not user.is_authenticated:
+            await self.close(code=4001)
+            return
+
+        is_participant = await self._user_is_participant(user, self.conversation_id)
+        if not is_participant:
+            await self.close(code=4003)
+            return
+
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        if hasattr(self, 'group_name'):
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError:
+            return
+
+        if data.get('type') != 'message':
+            return
+
+        text = (data.get('text') or '').strip()
+        if not text:
+            return
+
+        user = self.scope['user']
+        message = await self._save_message(user, self.conversation_id, text)
+
+        await self.channel_layer.group_send(
+            self.group_name,
+            {
+                'type': 'chat_message',
+                'id': message.id,
+                'conversation': int(self.conversation_id),
+                'sender': user.id,
+                'sender_id': user.id,
+                'text': message.text,
+                'created_at': message.created_at.isoformat(),
+            },
+        )
+
+    async def chat_message(self, event):
+        """Group event handler — Channels dispatches here for every
+        group_send with type 'chat_message', fanning it out to this socket."""
+        await self.send(text_data=json.dumps({
+            'type': 'message',
+            'id': event['id'],
+            'conversation': event['conversation'],
+            'sender': event.get('sender', event['sender_id']),
+            'sender_id': event['sender_id'],
+            'text': event['text'],
+            'created_at': event['created_at'],
+        }))
+
+    @database_sync_to_async
+    def _user_is_participant(self, user, conversation_id):
+        return Conversation.objects.filter(
+            id=conversation_id
+        ).filter(
+            Q(trainer=user) | Q(client=user)
+        ).exists()
+
+    @database_sync_to_async
+    def _save_message(self, user, conversation_id, text):
+        conversation = Conversation.objects.get(id=conversation_id)
+        return Message.objects.create(conversation=conversation, sender=user, text=text)
+
+
+
+
+
+===================================================
+FILE: fitness\models.py
+===================================================
+from django.db import models
+from django.conf import settings
+
+# 1. Personal Onboarding Health Profile
+class PersonalHealthProfile(models.Model):
+    GENDER_CHOICES = (
+        ('male', 'Male'),
+        ('female', 'Female'),
+        ('other', 'Other'),
+    )
+
+    ACTIVITY_CHOICES = (
+        ('sedentary', 'Sedentary'),
+        ('lightly_active', 'Lightly Active'),
+        ('moderately_active', 'Moderately Active'),
+        ('very_active', 'Very Active'),
+    )
+
+    GOAL_CHOICES = (
+        ('weight_loss', 'Weight Loss'),
+        ('muscle_gain', 'Muscle Gain'),
+        ('endurance', 'Endurance'),
+        ('maintenance', 'Maintenance'),
+    )
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='profile'
+    )
+    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='other')
+    age = models.PositiveIntegerField()
+    height = models.FloatField(help_text="Height in cm")
+    weight = models.FloatField(help_text="Weight in kg")
+    activity_level = models.CharField(max_length=20, choices=ACTIVITY_CHOICES, default='moderately_active')
+    fitness_goal = models.CharField(max_length=20, choices=GOAL_CHOICES, default='maintenance')
+    dietary_restrictions = models.JSONField(default=list, blank=True, help_text="List of dietary constraints")
+    medical_conditions = models.TextField(blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def bmi(self):
+        if self.height and self.weight:
+            height_m = self.height / 100.0
+            return round(self.weight / (height_m ** 2), 2)
+        return 0.0
+
+    def __str__(self):
+        return f"Profile of {self.user.email}"
+
+
+# 2. Workout Schedules (Active / Inactive)
+class WorkoutPlan(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='workout_plans')
+    trainer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_workouts'
+    )
+    title = models.CharField(max_length=150)
+    target_goal = models.CharField(max_length=100)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    is_ai_generated = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        # Automatically deactivate all other active workout plans of the user on saving this one
+        if self.is_active:
+            WorkoutPlan.objects.filter(user=self.user, is_active=True).exclude(pk=self.pk).update(is_active=False)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.title} for {self.user.email}"
+
+
+class WorkoutSession(models.Model):
+    workout_plan = models.ForeignKey(WorkoutPlan, on_delete=models.CASCADE, related_name='sessions')
+    day_of_week = models.CharField(max_length=50, help_text="e.g. Monday, Tuesday")
+    session_name = models.CharField(max_length=150, help_text="e.g. Push Day, Full Body Recovery")
+    notes = models.TextField(blank=True, default='')
+
+    def __str__(self):
+        return f"{self.day_of_week} - {self.session_name} ({self.workout_plan.user.email})"
+
+
+class Exercise(models.Model):
+    workout_session = models.ForeignKey(WorkoutSession, on_delete=models.CASCADE, related_name='exercises')
+    name = models.CharField(max_length=150)
+    custom_gif_url = models.URLField(max_length=500, null=True, blank=True, help_text="Paste a custom exercise GIF link here")
+    sets = models.PositiveIntegerField()
+    reps = models.CharField(max_length=50, help_text="e.g. '10-12' or '15'")
+    rest_time = models.CharField(max_length=50, help_text="e.g. '60s' or '90s'")
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['order']
+
+    def __str__(self):
+        return f"{self.name} - {self.sets}x{self.reps}"
+
+
+# 3. Diet Schedules (Active / Inactive)
+class DietPlan(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='diet_plans')
+    trainer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_diets'
+    )
+    title = models.CharField(max_length=150)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    is_ai_generated = models.BooleanField(default=True)
+    target_calories = models.PositiveIntegerField()
+    target_protein = models.PositiveIntegerField(help_text="in grams")
+    target_carbs = models.PositiveIntegerField(help_text="in grams")
+    target_fats = models.PositiveIntegerField(help_text="in grams")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        # Automatically deactivate all other active diet plans of the user on saving this one
+        if self.is_active:
+            DietPlan.objects.filter(user=self.user, is_active=True).exclude(pk=self.pk).update(is_active=False)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.title} for {self.user.email}"
+
+
+class Meal(models.Model):
+    MEAL_TIME_CHOICES = (
+        ('Breakfast', 'Breakfast'),
+        ('Lunch', 'Lunch'),
+        ('Dinner', 'Dinner'),
+        ('Snack', 'Snack'),
+    )
+
+    diet_plan = models.ForeignKey(DietPlan, on_delete=models.CASCADE, related_name='meals')
+    meal_time = models.CharField(max_length=50, choices=MEAL_TIME_CHOICES)
+    name = models.CharField(max_length=150)
+    custom_image_url = models.URLField(max_length=500, null=True, blank=True, help_text="Paste a custom food photo link here")
+    food_items = models.TextField(help_text="Details of food components")
+    calories = models.PositiveIntegerField(null=True, blank=True)
+    protein = models.PositiveIntegerField(null=True, blank=True)
+    carbs = models.PositiveIntegerField(null=True, blank=True)
+    fats = models.PositiveIntegerField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.meal_time}: {self.name} ({self.diet_plan.user.email})"
+
+
+# 4. Daily Performance & Well-being Logs
+class DailyLog(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='daily_logs')
+    date = models.DateField()
+    weight_logged = models.FloatField(null=True, blank=True, help_text="Weight in kg")
+    water_intake = models.PositiveIntegerField(default=0, help_text="Water in ml")
+    calories_consumed = models.PositiveIntegerField(null=True, blank=True)
+    fatigue_level = models.PositiveIntegerField(null=True, blank=True, help_text="Scale 1-10")
+    notes = models.TextField(blank=True, default='')
+
+    class Meta:
+        unique_together = ('user', 'date')
+        ordering = ['-date']
+
+    def __str__(self):
+        return f"Log for {self.user.email} on {self.date}"
+
+
+class WorkoutLog(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='workout_logs')
+    workout_session = models.ForeignKey(WorkoutSession, on_delete=models.CASCADE, related_name='logs')
+    date = models.DateField()
+    completed = models.BooleanField(default=True)
+    duration_minutes = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        unique_together = ('user', 'workout_session', 'date')
+        ordering = ['-date']
+
+    def __str__(self):
+        status = "Completed" if self.completed else "Missed"
+        return f"{self.user.email} - {self.workout_session.session_name} on {self.date} ({status})"
+
+
+# 5. Burnout and Plateau Warnings
+class Alert(models.Model):
+    ALERT_TYPES = (
+        ('burnout', 'Burnout Warning'),
+        ('plateau', 'Plateau Warning'),
+    )
+
+    STATUS_CHOICES = (
+        ('active', 'Active'),
+        ('resolved', 'Resolved'),
+    )
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='alerts')
+    type = models.CharField(max_length=15, choices=ALERT_TYPES)
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='active')
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.get_type_display()} ({self.status}) for {self.user.email}"
+
+
+# 6. Trainer-Client Mappings
+class TrainerRelationship(models.Model):
+    trainer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='clients'
+    )
+    client = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='trainers'
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('trainer', 'client')
+
+    def __str__(self):
+        return f"Trainer {self.trainer.email} -> Client {self.client.email}"
+
+# 7. Public-facing trainer profile (browsable by clients on /find-trainer)
+class TrainerProfile(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='trainer_profile'
+    )
+    bio = models.TextField(blank=True, default='')
+    specialties = models.JSONField(default=list, blank=True)
+    years_experience = models.PositiveIntegerField(null=True, blank=True)
+    certifications = models.JSONField(default=list, blank=True, help_text="List of certification names")
+    rating = models.FloatField(default=0.0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Trainer profile for {self.user.email}"
+
+
+# 8. Trainer <-> Client connection requests (browse -> request -> accept flow)
+class Connection(models.Model):
+    STATUS_CHOICES = (
+        ('pending', 'Pending'),
+        ('accepted', 'Accepted'),
+        ('declined', 'Declined'),
+    )
+
+    from_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='sent_connections'
+    )
+    to_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='received_connections'
+    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    note = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.from_user.email} -> {self.to_user.email} ({self.status})"
+
+
+# 9. A trainer<->client message thread, created once a Connection is accepted
+class Conversation(models.Model):
+    trainer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='trainer_conversations'
+    )
+    client = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='client_conversations'
+    )
+    connection = models.OneToOneField(
+        Connection,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='conversation'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('trainer', 'client')
+
+    def __str__(self):
+        return f"Conversation: {self.trainer.email} <-> {self.client.email}"
+
+
+class Message(models.Model):
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
+    sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='sent_messages')
+    text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"{self.sender.email}: {self.text[:40]}"
+
+
+
+===================================================
+FILE: fitness\routing.py
+===================================================
+from django.urls import re_path
+from .consumers import ChatConsumer
+
+websocket_urlpatterns = [
+    re_path(r'^ws/chat/(?P<conversation_id>\d+)/$', ChatConsumer.as_asgi()),
+]
+
+
+
+===================================================
+FILE: fitness\serializers.py
+===================================================
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from .models import (
+    PersonalHealthProfile,
+    WorkoutPlan,
+    WorkoutSession,
+    Exercise,
+    DietPlan,
+    Meal,
+    DailyLog,
+    WorkoutLog,
+    Alert,
+    TrainerRelationship,
+    TrainerProfile,
+    Connection,
+    Conversation,
+    Message,
+)
+from .services import generate_and_save_fitness_plans
+
+User = get_user_model()
+
+# --- 1. PERSONAL HEALTH PROFILE ---
+class PersonalHealthProfileSerializer(serializers.ModelSerializer):
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    bmi = serializers.FloatField(read_only=True)
+
+    class Meta:
+        model = PersonalHealthProfile
+        fields = ('id', 'user', 'gender', 'age', 'height', 'weight', 'activity_level', 'fitness_goal', 'dietary_restrictions', 'medical_conditions', 'bmi')
+
+    def create(self, validated_data):
+        profile = super().create(validated_data)
+        # Automatic trigger: Runs our AI Bridge immediately upon onboarding profile completion!
+        generate_and_save_fitness_plans(profile)
+        return profile
+
+
+# --- 2. NESTED PLAN SERIALIZERS (To cleanly structure the JSON outputs) ---
+
+class ExerciseSerializer(serializers.ModelSerializer):
+    custom_gif_url = serializers.URLField(required=False, allow_null=True)
+
+    class Meta:
+        model = Exercise
+        fields = ('id', 'name', 'custom_gif_url', 'sets', 'reps', 'rest_time', 'order')
+
+
+class WorkoutSessionSerializer(serializers.ModelSerializer):
+    exercises = ExerciseSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = WorkoutSession
+        fields = ('id', 'day_of_week', 'session_name', 'notes', 'exercises')
+
+
+class WorkoutPlanSerializer(serializers.ModelSerializer):
+    sessions = WorkoutSessionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = WorkoutPlan
+        fields = ('id', 'title', 'target_goal', 'start_date', 'end_date', 'is_active', 'is_ai_generated', 'sessions', 'created_at')
+
+
+class MealSerializer(serializers.ModelSerializer):
+    custom_image_url = serializers.URLField(required=False, allow_null=True)
+
+    class Meta:
+        model = Meal
+        fields = ('id', 'meal_time', 'name', 'custom_image_url', 'food_items', 'calories', 'protein', 'carbs', 'fats')
+
+
+class DietPlanSerializer(serializers.ModelSerializer):
+    meals = MealSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = DietPlan
+        fields = ('id', 'title', 'start_date', 'end_date', 'is_active', 'is_ai_generated', 'target_calories', 'target_protein', 'target_carbs', 'target_fats', 'meals', 'created_at')
+
+
+# --- 3. CHRONOLOGICAL LOGGING SERIALIZERS ---
+
+class DailyLogSerializer(serializers.ModelSerializer):
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
+    class Meta:
+        model = DailyLog
+        fields = ('id', 'user', 'date', 'weight_logged', 'water_intake', 'calories_consumed', 'fatigue_level', 'notes')
+
+
+class WorkoutLogSerializer(serializers.ModelSerializer):
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
+    class Meta:
+        model = WorkoutLog
+        fields = ('id', 'user', 'workout_session', 'date', 'completed', 'duration_minutes')
+
+
+# --- 4. SYSTEM ALERTS SERIALIZERS ---
+
+class AlertSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Alert
+        fields = ('id', 'type', 'status', 'message', 'created_at', 'resolved_at')
+        read_only_fields = ('id', 'type', 'status', 'message', 'created_at', 'resolved_at')
+
+
+# --- 5. TRAINER CLIENT ROSTER SERIALIZERS ---
+
+class TrainerClientSerializer(serializers.ModelSerializer):
+    client_id = serializers.IntegerField(source='client.id', read_only=True)
+    client_email = serializers.EmailField(source='client.email', read_only=True)
+    client_first_name = serializers.CharField(source='client.first_name', read_only=True)
+    client_last_name = serializers.CharField(source='client.last_name', read_only=True)
+    profile = PersonalHealthProfileSerializer(source='client.profile', read_only=True)
+    active_alerts = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TrainerRelationship
+        fields = ('id', 'client_id', 'client_email', 'client_first_name', 'client_last_name', 'profile', 'active_alerts', 'is_active')
+
+    # Aggregates active burnout & plateau warnings for the trainer's roster
+    def get_active_alerts(self, obj):
+        alerts = Alert.objects.filter(user=obj.client, status='active')
+        return AlertSerializer(alerts, many=True).data
+
+
+# --- 6. TRAINER DISCOVERY, CONNECTIONS, MESSAGING ---
+
+def _full_name(user):
+    name = f"{user.first_name} {user.last_name}".strip()
+    return name or user.email
+
+
+class TrainerProfileSerializer(serializers.ModelSerializer):
+    """Used both for a trainer writing their own profile (onboarding) and
+    for read-only display via TrainerListSerializer/TrainerDetailSerializer."""
+    class Meta:
+        model = TrainerProfile
+        fields = ('id', 'bio', 'specialties', 'years_experience', 'certifications', 'rating')
+        read_only_fields = ('id', 'rating')
+
+
+class TrainerListSerializer(serializers.Serializer):
+    """Read-only shape for GET /api/fitness/trainers/ — one row per trainer User."""
+    id = serializers.IntegerField()
+    name = serializers.SerializerMethodField()
+    bio = serializers.CharField(source='trainer_profile.bio', default='')
+    specialties = serializers.ListField(source='trainer_profile.specialties', default=list)
+    years_experience = serializers.IntegerField(source='trainer_profile.years_experience', default=None)
+    rating = serializers.FloatField(source='trainer_profile.rating', default=0.0)
+    client_count = serializers.SerializerMethodField()
+
+    def get_name(self, user):
+        return _full_name(user)
+
+    def get_client_count(self, user):
+        return TrainerRelationship.objects.filter(trainer=user, is_active=True).count()
+
+
+class TrainerDetailSerializer(TrainerListSerializer):
+    """Adds fields only needed on the single-trainer profile page."""
+    certifications = serializers.ListField(source='trainer_profile.certifications', default=list)
+    connection_status = serializers.SerializerMethodField()
+    conversation_id = serializers.SerializerMethodField()
+
+    def get_connection_status(self, trainer_user):
+        request_user = self.context['request'].user
+        connection = (
+            Connection.objects.filter(from_user=request_user, to_user=trainer_user)
+            .order_by('-created_at')
+            .first()
+            or Connection.objects.filter(from_user=trainer_user, to_user=request_user)
+            .order_by('-created_at')
+            .first()
+        )
+        if not connection:
+            return 'none'
+        return connection.status if connection.status != 'declined' else 'none'
+
+    def get_conversation_id(self, trainer_user):
+        request_user = self.context['request'].user
+        conversation = Conversation.objects.filter(trainer=trainer_user, client=request_user).first()
+        return conversation.id if conversation else None
+
+
+class ClientListSerializer(serializers.Serializer):
+    """Read-only shape for GET /api/fitness/clients/ — trainers browsing prospects."""
+    id = serializers.IntegerField()
+    name = serializers.SerializerMethodField()
+    fitness_goal = serializers.CharField(source='profile.fitness_goal', default=None)
+    activity_level = serializers.CharField(source='profile.activity_level', default=None)
+    has_active_alert = serializers.SerializerMethodField()
+
+    def get_name(self, user):
+        return _full_name(user)
+
+    def get_has_active_alert(self, user):
+        return Alert.objects.filter(user=user, status='active').exists()
+
+
+class ConnectionSerializer(serializers.Serializer):
+    """Read-only shape for GET /api/fitness/connections/."""
+    id = serializers.IntegerField()
+    direction = serializers.SerializerMethodField()
+    status = serializers.CharField()
+    counterpart_id = serializers.SerializerMethodField()
+    counterpart_name = serializers.SerializerMethodField()
+    counterpart_role = serializers.SerializerMethodField()
+    note = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    conversation_id = serializers.SerializerMethodField()
+
+    def _counterpart(self, connection):
+        request_user = self.context['request'].user
+        return connection.to_user if connection.from_user_id == request_user.id else connection.from_user
+
+    def get_direction(self, connection):
+        request_user = self.context['request'].user
+        return 'outgoing' if connection.from_user_id == request_user.id else 'incoming'
+
+    def get_counterpart_id(self, connection):
+        return self._counterpart(connection).id
+
+    def get_counterpart_name(self, connection):
+        return _full_name(self._counterpart(connection))
+
+    def get_counterpart_role(self, connection):
+        return self._counterpart(connection).role
+
+    def get_conversation_id(self, connection):
+        conversation = Conversation.objects.filter(connection=connection).first()
+        return conversation.id if conversation else None
+
+
+class ConversationListSerializer(serializers.Serializer):
+    """Read-only shape for GET /api/fitness/conversations/."""
+    id = serializers.IntegerField()
+    counterpart_id = serializers.SerializerMethodField()
+    counterpart_name = serializers.SerializerMethodField()
+    counterpart_role = serializers.SerializerMethodField()
+    last_message = serializers.SerializerMethodField()
+    last_message_at = serializers.SerializerMethodField()
+
+    def _counterpart(self, conversation):
+        request_user = self.context['request'].user
+        return conversation.client if conversation.trainer_id == request_user.id else conversation.trainer
+
+    def get_counterpart_id(self, conversation):
+        return self._counterpart(conversation).id
+
+    def get_counterpart_name(self, conversation):
+        return _full_name(self._counterpart(conversation))
+
+    def get_counterpart_role(self, conversation):
+        return self._counterpart(conversation).role
+
+    def get_last_message(self, conversation):
+        last = conversation.messages.order_by('-created_at').first()
+        return last.text if last else None
+
+    def get_last_message_at(self, conversation):
+        last = conversation.messages.order_by('-created_at').first()
+        return last.created_at if last else None
+
+
+class MessageSerializer(serializers.ModelSerializer):
+    sender_id = serializers.IntegerField(source='sender.id', read_only=True)
+
+    class Meta:
+        model = Message
+        fields = ('id', 'conversation', 'sender', 'sender_id', 'text', 'created_at')
+        read_only_fields = ('id', 'sender', 'sender_id', 'created_at')
+
+
+
+
+
+===================================================
+FILE: fitness\services.py
+===================================================
+from ai_engine.services import AIFitnessEngine
+from .models import WorkoutPlan, WorkoutSession, Exercise, DietPlan, Meal, DailyLog, WorkoutLog, Alert, PersonalHealthProfile
+from django.utils import timezone
+
+def generate_and_save_fitness_plans(profile_instance, burnout_alert=False, plateau_alert=False):
+    """
+    Calls the AI engine to generate plans for a user based on their PersonalHealthProfile,
+    including adaptive flags for burnout and plateaus. Saves plans directly to PostgreSQL.
+    """
+    user = profile_instance.user
+    
+    # 1. Structure the profile data for the AI engine
+    profile_data = {
+        "gender": profile_instance.gender,
+        "age": profile_instance.age,
+        "height": profile_instance.height,
+        "weight": profile_instance.weight,
+        "activity_level": profile_instance.activity_level,
+        "fitness_goal": profile_instance.fitness_goal,
+        "dietary_restrictions": profile_instance.dietary_restrictions,
+        "medical_conditions": profile_instance.medical_conditions
+    }
+    
+    # 2. Call the AI Fitness Engine
+    engine = AIFitnessEngine()
+    ai_plans = engine.generate_plans(
+        profile_data,
+        burnout_alert=burnout_alert,
+        plateau_alert=plateau_alert
+    )
+    
+    # 3. Save the Workout Plan
+    workout_data = ai_plans.get('workout_plan', {})
+    if workout_data:
+        workout_plan = WorkoutPlan.objects.create(
+            user=user,
+            title=workout_data.get('title', 'AI Customized Workout Plan'),
+            target_goal=workout_data.get('target_goal', profile_instance.fitness_goal),
+            is_active=True,
+            is_ai_generated=True
+        )
+        
+        for session_data in workout_data.get('weekly_sessions', []):
+            session = WorkoutSession.objects.create(
+                workout_plan=workout_plan,
+                day_of_week=session_data.get('day_of_week', 'Monday'),
+                session_name=session_data.get('session_name', 'General Workout')
+            )
+            
+            for idx, ex_data in enumerate(session_data.get('exercises', [])):
+                Exercise.objects.create(
+                    workout_session=session,
+                    name=ex_data.get('name', 'Exercise'),
+                    sets=int(ex_data.get('sets', 3)),
+                    reps=str(ex_data.get('reps', '10')),
+                    rest_time=str(ex_data.get('rest_time', '60s')),
+                    order=idx
+                )
+                
+    # 4. Save the Diet Plan
+    diet_data = ai_plans.get('diet_plan', {})
+    if diet_data:
+        diet_plan = DietPlan.objects.create(
+            user=user,
+            title=diet_data.get('title', 'AI Customized Diet Plan'),
+            is_active=True,
+            is_ai_generated=True,
+            target_calories=int(diet_data.get('target_calories', 2000)),
+            target_protein=int(diet_data.get('target_protein', 130)),
+            target_carbs=int(diet_data.get('target_carbs', 220)),
+            target_fats=int(diet_data.get('target_fats', 65))
+        )
+        
+        for meal_data in diet_data.get('meals', []):
+            Meal.objects.create(
+                diet_plan=diet_plan,
+                meal_time=meal_data.get('meal_time', 'Breakfast'),
+                name=meal_data.get('name', 'Healthy Meal'),
+                food_items=meal_data.get('food_items', 'Clean food'),
+                calories=meal_data.get('calories'),
+                protein=meal_data.get('protein'),
+                carbs=meal_data.get('carbs'),
+                fats=meal_data.get('fats')
+            )
+
+
+def evaluate_burnout_and_plateau(user):
+    """
+    Analyzes the user's chronological logging history to detect early signs
+    of burnout or fitness plateaus, automatically generating system Alerts
+    and triggering AI plan adjustments.
+    """
+    try:
+        profile = PersonalHealthProfile.objects.get(user=user)
+    except PersonalHealthProfile.DoesNotExist:
+        return []
+
+    alerts_triggered = []
+
+    # --- 1. BURNOUT DETECTION ---
+    # Check if user has logged high fatigue (fatigue_level >= 8) for the 3 most recent consecutive days
+    recent_logs = list(DailyLog.objects.filter(user=user).order_by('-date')[:3])
+    
+    if len(recent_logs) == 3:
+        fatigue_scores = [log.fatigue_level for log in recent_logs if log.fatigue_level is not None]
+        if len(fatigue_scores) == 3 and all(score >= 8 for score in fatigue_scores):
+            # Trigger Burnout Alert if not already active
+            active_burnout = Alert.objects.filter(user=user, type='burnout', status='active').first()
+            if not active_burnout:
+                msg = "ALERT: High fatigue scores detected for 3 consecutive days. We have flagged a Burnout risk. Your workout and diet schedules have been automatically shifted to an Active Recovery & Deload plan."
+                Alert.objects.create(
+                    user=user,
+                    type='burnout',
+                    status='active',
+                    message=msg
+                )
+                alerts_triggered.append(msg)
+                # Regenerate plans with burnout deload active!
+                generate_and_save_fitness_plans(profile, burnout_alert=True)
+
+    # --- 2. PLATEAU DETECTION ---
+    # Check if weight has stalled (< 0.1kg change) in the last 14 days over 3 or more weigh-ins
+    fourteen_days_ago = timezone.now().date() - timezone.timedelta(days=14)
+    logs_14d = list(DailyLog.objects.filter(user=user, date__gte=fourteen_days_ago).order_by('-date'))
+    
+    if len(logs_14d) >= 3:
+        weights = [log.weight_logged for log in logs_14d if log.weight_logged is not None]
+        if len(weights) >= 3:
+            weight_diff = abs(weights[0] - weights[-1])
+            if weight_diff < 0.1:
+                active_plateau = Alert.objects.filter(user=user, type='plateau', status='active').first()
+                if not active_plateau:
+                    msg = "ALERT: We detected a progress plateau over the last 14 days. Your body has adapted to your current energy and training balance. Your schedules have been automatically updated to a Plateau-Breaker protocol to shock your metabolism!"
+                    Alert.objects.create(
+                        user=user,
+                        type='plateau',
+                        status='active',
+                        message=msg
+                    )
+                    alerts_triggered.append(msg)
+                    # Regenerate plans with plateau breaker active!
+                    generate_and_save_fitness_plans(profile, plateau_alert=True)
+
+    return alerts_triggered
+
+
+===================================================
+FILE: fitness\tests.py
+===================================================
+from django.test import TestCase
+from django.contrib.auth import get_user_model
+from rest_framework.test import APIClient
+from rest_framework import status
+
+User = get_user_model()
+
+
+class FitnessEndpointEmptyStateTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="tester",
+            email="tester@example.com",
+            password="strong-password-123",
+            first_name="Test",
+            last_name="User",
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_profile_returns_empty_object_when_missing(self):
+        response = self.client.get("/api/fitness/profile/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json(), {})
+
+    def test_workout_plan_returns_empty_object_when_missing(self):
+        response = self.client.get("/api/fitness/plans/workout/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json(), {})
+
+    def test_diet_plan_returns_empty_object_when_missing(self):
+        response = self.client.get("/api/fitness/plans/diet/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json(), {})
+
+
+
+===================================================
+FILE: fitness\urls.py
+===================================================
+from django.urls import path
+from .views import (
+    PersonalHealthProfileView,
+    ActiveWorkoutPlanView,
+    ActiveDietPlanView,
+    DailyLogListCreateView,
+    WorkoutLogListCreateView,
+    AlertListView,
+    AlertResolveView,
+    TrainerClientListView,
+    TrainerOverrideDietPlanView,
+    DashboardSummaryView,
+    TrainerListView,
+    TrainerDetailView,
+    ClientListView,
+    TrainerProfileView,
+    ConnectionRequestView,
+    ConnectionListView,
+    ConnectionAcceptView,
+    ConnectionDeclineView,
+    ConversationListView,
+    ConversationMessagesView,
+)
+
+urlpatterns = [
+    # Onboarding & Active Plans
+    path('profile/', PersonalHealthProfileView.as_view(), name='fitness_profile'),
+    path('plans/workout/', ActiveWorkoutPlanView.as_view(), name='active_workout_plan'),
+    path('plans/diet/', ActiveDietPlanView.as_view(), name='active_diet_plan'),
+    
+    # Chronological Daily & Workout Tracking Logs (Step 7)
+    path('logs/daily/', DailyLogListCreateView.as_view(), name='daily_log_list_create'),
+    path('logs/workout/', WorkoutLogListCreateView.as_view(), name='workout_log_list_create'),
+    
+    # Burnout & Plateau Detection Alerts (Step 8)
+    path('alerts/', AlertListView.as_view(), name='alert_list'),
+    path('alerts/<int:pk>/resolve/', AlertResolveView.as_view(), name='alert_resolve'),
+    
+    # Trainer Roster & Plan Overrides
+    path('trainer/clients/', TrainerClientListView.as_view(), name='trainer_client_list'),
+    path('trainer/override-diet/', TrainerOverrideDietPlanView.as_view(), name='trainer_override_diet'),
+    
+    # Visual Progress Charts Dashboard Stats (Step 9)
+    path('dashboard/summary/', DashboardSummaryView.as_view(), name='dashboard_summary'),
+
+    # Trainer discovery (client browsing) & the trainer's own public profile
+    path('trainers/', TrainerListView.as_view(), name='trainer_list'),
+    path('trainers/<int:pk>/', TrainerDetailView.as_view(), name='trainer_detail'),
+    path('trainer-profile/', TrainerProfileView.as_view(), name='trainer_profile'),
+
+    # Client discovery (trainer browsing)
+    path('clients/', ClientListView.as_view(), name='client_list'),
+
+    # Connection requests (browse -> request -> accept/decline)
+    path('connections/', ConnectionListView.as_view(), name='connection_list'),
+    path('connections/request/', ConnectionRequestView.as_view(), name='connection_request'),
+    path('connections/<int:pk>/accept/', ConnectionAcceptView.as_view(), name='connection_accept'),
+    path('connections/<int:pk>/decline/', ConnectionDeclineView.as_view(), name='connection_decline'),
+
+    # Conversations & messages (REST history; live delivery is via Channels)
+    path('conversations/', ConversationListView.as_view(), name='conversation_list'),
+    path('conversations/<int:pk>/messages/', ConversationMessagesView.as_view(), name='conversation_messages'),
+]
+
+
+
+===================================================
+FILE: fitness\views.py
+===================================================
+from django.db.models import Q
+from django.utils import timezone
+from rest_framework import generics, status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied, NotFound, ValidationError
+from django.contrib.auth import get_user_model
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+
+from .models import (
+    PersonalHealthProfile,
+    WorkoutPlan,
+    DietPlan,
+    DailyLog,
+    WorkoutLog,
+    Alert,
+    TrainerRelationship,
+    TrainerProfile,
+    Connection,
+    Conversation,
+    Message,
+)
+from .serializers import (
+    PersonalHealthProfileSerializer,
+    WorkoutPlanSerializer,
+    DietPlanSerializer,
+    DailyLogSerializer,
+    WorkoutLogSerializer,
+    AlertSerializer,
+    TrainerClientSerializer,
+    TrainerProfileSerializer,
+    TrainerListSerializer,
+    TrainerDetailSerializer,
+    ClientListSerializer,
+    ConnectionSerializer,
+    ConversationListSerializer,
+    MessageSerializer,
+)
+from .services import evaluate_burnout_and_plateau
+
+User = get_user_model()
+
+# --- 1. ONBOARDING HEALTH PROFILE ---
+class PersonalHealthProfileView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = PersonalHealthProfileSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_object(self):
+        try:
+            return PersonalHealthProfile.objects.get(user=self.request.user)
+        except PersonalHealthProfile.DoesNotExist:
+            return None
+
+    def get(self, request, *args, **kwargs):
+        profile = self.get_object()
+        if profile is None:
+            return Response({}, status=status.HTTP_200_OK)
+        serializer = self.get_serializer(profile)
+        return Response(serializer.data)
+
+    def post(self, request, *args, **kwargs):
+        profile = self.get_object()
+        if profile is not None:
+            return Response({"detail": "Profile already exists. Use PUT or PATCH to update."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+# --- 2. ACTIVE PLANS ---
+class ActiveWorkoutPlanView(generics.RetrieveAPIView):
+    serializer_class = WorkoutPlanSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_object(self):
+        try:
+            return WorkoutPlan.objects.get(user=self.request.user, is_active=True)
+        except WorkoutPlan.DoesNotExist:
+            return None
+
+    def get(self, request, *args, **kwargs):
+        plan = self.get_object()
+        if plan is None:
+            return Response({}, status=status.HTTP_200_OK)
+        serializer = self.get_serializer(plan)
+        return Response(serializer.data)
+
+
+class ActiveDietPlanView(generics.RetrieveAPIView):
+    serializer_class = DietPlanSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_object(self):
+        try:
+            return DietPlan.objects.get(user=self.request.user, is_active=True)
+        except DietPlan.DoesNotExist:
+            return None
+
+    def get(self, request, *args, **kwargs):
+        plan = self.get_object()
+        if plan is None:
+            return Response({}, status=status.HTTP_200_OK)
+        serializer = self.get_serializer(plan)
+        return Response(serializer.data)
+
+
+# --- 3. DAILY LOGGING & WORKOUT LOGGING ---
+class DailyLogListCreateView(generics.ListCreateAPIView):
+    serializer_class = DailyLogSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_queryset(self):
+        return DailyLog.objects.filter(user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        date_val = request.data.get('date')
+        if not date_val:
+            return Response({"detail": "Date field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # UPSERT behavior
+        existing_log = DailyLog.objects.filter(user=request.user, date=date_val).first()
+        if existing_log:
+            serializer = self.get_serializer(existing_log, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            evaluate_burnout_and_plateau(request.user)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        evaluate_burnout_and_plateau(request.user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class WorkoutLogListCreateView(generics.ListCreateAPIView):
+    serializer_class = WorkoutLogSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_queryset(self):
+        return WorkoutLog.objects.filter(user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        session_id = request.data.get('workout_session')
+        date_val = request.data.get('date')
+        if not session_id or not date_val:
+            return Response({"detail": "workout_session and date are required fields."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # UPSERT behavior
+        existing_log = WorkoutLog.objects.filter(user=request.user, workout_session_id=session_id, date=date_val).first()
+        if existing_log:
+            serializer = self.get_serializer(existing_log, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        return super().create(request, *args, **kwargs)
+
+
+# --- 4. SYSTEM ALERTS LIST & RESOLUTION ---
+class AlertListView(generics.ListAPIView):
+    serializer_class = AlertSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_queryset(self):
+        return Alert.objects.filter(user=self.request.user)
+
+
+class AlertResolveView(generics.UpdateAPIView):
+    serializer_class = AlertSerializer
+    permission_classes = (IsAuthenticated,)
+    queryset = Alert.objects.all()
+
+    def get_queryset(self):
+        return Alert.objects.filter(user=self.request.user, status='active')
+
+    def update(self, request, *args, **kwargs):
+        alert = self.get_object()
+        alert.status = 'resolved'
+        alert.resolved_at = timezone.now()
+        alert.save()
+        return Response({
+            "message": "Alert marked as resolved successfully.",
+            "alert": self.get_serializer(alert).data
+        }, status=status.HTTP_200_OK)
+
+
+# --- 5. TRAINER ENDPOINTS (roster + plan override) ---
+class TrainerClientListView(generics.ListAPIView):
+    serializer_class = TrainerClientSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_queryset(self):
+        # Only allow 'TRAINER' or 'ADMIN' roles to access client lists
+        if self.request.user.role not in ['TRAINER', 'ADMIN']:
+            raise PermissionDenied("Only accounts with the Trainer role can access client rosters.")
+        return TrainerRelationship.objects.filter(trainer=self.request.user, is_active=True)
+
+
+class TrainerOverrideDietPlanView(generics.CreateAPIView):
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request, *args, **kwargs):
+        if request.user.role not in ['TRAINER', 'ADMIN']:
+            raise PermissionDenied("Only trainers can override client plans.")
+            
+        client_id = request.data.get('client_id')
+        target_calories = request.data.get('target_calories')
+        target_protein = request.data.get('target_protein', 150)
+        target_carbs = request.data.get('target_carbs', 200)
+        target_fats = request.data.get('target_fats', 70)
+        title = request.data.get('title', 'Trainer Assigned Custom Diet')
+        
+        if not client_id or not target_calories:
+            return Response({"detail": "client_id and target_calories are required."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Ensure they are the assigned trainer
+        relationship = TrainerRelationship.objects.filter(trainer=request.user, client_id=client_id, is_active=True).first()
+        if not relationship and request.user.role != 'ADMIN':
+            raise PermissionDenied("You are not assigned as the trainer for this client.")
+            
+        # Create plan (is_ai_generated = False)
+        plan = DietPlan.objects.create(
+            user_id=client_id,
+            trainer=request.user,
+            title=title,
+            target_calories=target_calories,
+            target_protein=target_protein,
+            target_carbs=target_carbs,
+            target_fats=target_fats,
+            is_active=True,
+            is_ai_generated=False
+        )
+        
+        return Response({
+            "message": "Client diet plan overridden successfully by trainer.",
+            "plan_id": plan.id,
+            "title": plan.title,
+            "is_ai_generated": plan.is_ai_generated
+        }, status=status.HTTP_201_CREATED)
+
+
+# --- 6. DASHBOARD PROGRESS STATS & CHART AGGREGATOR ---
+class DashboardSummaryView(generics.RetrieveAPIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+        
+        # Fetch past 30 days of logs sorted ascending for line charts
+        logs = list(DailyLog.objects.filter(user=user).order_by('date')[:30])
+        
+        weight_history = []
+        calorie_history = []
+        water_history = []
+        fatigue_history = []
+        
+        for log in logs:
+            if log.weight_logged is not None:
+                weight_history.append({"date": str(log.date), "weight": log.weight_logged})
+            if log.calories_consumed is not None:
+                calorie_history.append({"date": str(log.date), "calories": log.calories_consumed})
+            water_history.append({"date": str(log.date), "water": log.water_intake})
+            if log.fatigue_level is not None:
+                fatigue_history.append({"date": str(log.date), "fatigue": log.fatigue_level})
+                
+        # Workout completion stats
+        total_workouts = WorkoutLog.objects.filter(user=user).count()
+        completed_workouts = WorkoutLog.objects.filter(user=user, completed=True).count()
+        completion_rate = round((completed_workouts / total_workouts * 100), 2) if total_workouts > 0 else 0.0
+        
+        # Active alert flags
+        active_alerts = Alert.objects.filter(user=user, status='active').values('id', 'type', 'message')
+        
+        # Currently active diet and workout goals
+        active_diet = DietPlan.objects.filter(user=user, is_active=True).first()
+        active_workout = WorkoutPlan.objects.filter(user=user, is_active=True).first()
+        
+        return Response({
+            "weight_history": weight_history,
+            "calorie_history": calorie_history,
+            "water_history": water_history,
+            "fatigue_history": fatigue_history,
+            "workout_stats": {
+                "total_logged": total_workouts,
+                "completed": completed_workouts,
+                "completion_rate": completion_rate
+            },
+            "active_alerts": list(active_alerts),
+            "targets": {
+                "calories": active_diet.target_calories if active_diet else None,
+                "protein": active_diet.target_protein if active_diet else None,
+                "carbs": active_diet.target_carbs if active_diet else None,
+                "fats": active_diet.target_fats if active_diet else None,
+                "workout_title": active_workout.title if active_workout else None
+            }
+        }, status=status.HTTP_200_OK)
+
+
+# --- 7. TRAINER DISCOVERY (client browses trainers) ---
+class TrainerListView(generics.ListAPIView):
+    """GET /api/fitness/trainers/?search=<q>"""
+    serializer_class = TrainerListSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_queryset(self):
+        queryset = User.objects.filter(role='TRAINER').select_related('trainer_profile')
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+                | Q(trainer_profile__specialties__icontains=search)
+            )
+        return queryset
+
+
+class TrainerDetailView(generics.RetrieveAPIView):
+    """GET /api/fitness/trainers/<id>/"""
+    serializer_class = TrainerDetailSerializer
+    permission_classes = (IsAuthenticated,)
+    lookup_url_kwarg = 'pk'
+
+    def get_queryset(self):
+        return User.objects.filter(role='TRAINER').select_related('trainer_profile')
+
+
+# --- 8. CLIENT DISCOVERY (trainer browses prospective clients) ---
+class ClientListView(generics.ListAPIView):
+    """GET /api/fitness/clients/?search=<q>  — Trainer/Admin only"""
+    serializer_class = ClientListSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_queryset(self):
+        if self.request.user.role not in ['TRAINER', 'ADMIN']:
+            raise PermissionDenied("Only accounts with the Trainer role can browse clients.")
+
+        already_clients = TrainerRelationship.objects.filter(
+            trainer=self.request.user, is_active=True
+        ).values_list('client_id', flat=True)
+
+        queryset = User.objects.filter(role='USER').exclude(id__in=already_clients).select_related('profile')
+
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+                | Q(profile__fitness_goal__icontains=search)
+            )
+        return queryset
+
+
+# --- 9. TRAINER'S OWN PUBLIC PROFILE (onboarding writes here) ---
+class TrainerProfileView(generics.RetrieveUpdateAPIView):
+    """GET/POST/PATCH /api/fitness/trainer-profile/ — the logged-in trainer's own profile."""
+    serializer_class = TrainerProfileSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_object(self):
+        if self.request.user.role not in ['TRAINER', 'ADMIN']:
+            raise PermissionDenied("Only trainers have a coaching profile.")
+        profile, _ = TrainerProfile.objects.get_or_create(user=self.request.user)
+        return profile
+
+    def post(self, request, *args, **kwargs):
+        # Onboarding calls POST; treat it the same as an update since the
+        # profile row always exists once get_object() runs get_or_create.
+        profile = self.get_object()
+        serializer = self.get_serializer(profile, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# --- 10. CONNECTIONS (request -> accept/decline flow) ---
+def _trainer_and_client_from_connection(connection):
+    """Whichever side actually holds the TRAINER/ADMIN role becomes the
+    trainer half of the resulting relationship/conversation."""
+    if connection.from_user.role in ['TRAINER', 'ADMIN']:
+        return connection.from_user, connection.to_user
+    return connection.to_user, connection.from_user
+
+
+class ConnectionRequestView(APIView):
+    """POST /api/fitness/connections/request/  body: { to_user_id, note? }"""
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request, *args, **kwargs):
+        to_user_id = request.data.get('to_user_id')
+        if not to_user_id:
+            raise ValidationError({"to_user_id": "This field is required."})
+        if str(to_user_id) == str(request.user.id):
+            raise ValidationError({"to_user_id": "You can't connect with yourself."})
+
+        try:
+            to_user = User.objects.get(id=to_user_id)
+        except User.DoesNotExist:
+            raise NotFound("That user doesn't exist.")
+
+        existing = Connection.objects.filter(
+            Q(from_user=request.user, to_user=to_user) | Q(from_user=to_user, to_user=request.user),
+            status='pending',
+        ).first()
+        if existing:
+            return Response({"detail": "A request is already pending between you two."}, status=status.HTTP_400_BAD_REQUEST)
+
+        connection = Connection.objects.create(
+            from_user=request.user,
+            to_user=to_user,
+            note=request.data.get('note', ''),
+        )
+        return Response(ConnectionSerializer(connection, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
+
+class ConnectionListView(generics.ListAPIView):
+    """GET /api/fitness/connections/ — every connection involving the current user."""
+    serializer_class = ConnectionSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_queryset(self):
+        user = self.request.user
+        return Connection.objects.filter(Q(from_user=user) | Q(to_user=user)).exclude(status='declined')
+
+
+class ConnectionAcceptView(APIView):
+    """POST /api/fitness/connections/<id>/accept/ — only the recipient can accept."""
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request, pk, *args, **kwargs):
+        connection = Connection.objects.filter(pk=pk, to_user=request.user, status='pending').first()
+        if not connection:
+            raise NotFound("No pending request found.")
+
+        connection.status = 'accepted'
+        connection.responded_at = timezone.now()
+        connection.save()
+
+        trainer_user, client_user = _trainer_and_client_from_connection(connection)
+
+        relationship, _ = TrainerRelationship.objects.get_or_create(
+            trainer=trainer_user,
+            client=client_user,
+            defaults={'is_active': True},
+        )
+        relationship.is_active = True
+        relationship.save(update_fields=['is_active'])
+
+        conversation, created = Conversation.objects.get_or_create(
+            trainer=trainer_user,
+            client=client_user,
+            defaults={'connection': connection},
+        )
+        if not created and conversation.connection_id != connection.id:
+            conversation.connection = connection
+            conversation.save(update_fields=['connection'])
+
+        return Response(ConnectionSerializer(connection, context={'request': request}).data, status=status.HTTP_200_OK)
+
+
+class ConnectionDeclineView(APIView):
+    """POST /api/fitness/connections/<id>/decline/ — only the recipient can decline."""
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request, pk, *args, **kwargs):
+        connection = Connection.objects.filter(pk=pk, to_user=request.user, status='pending').first()
+        if not connection:
+            raise NotFound("No pending request found.")
+
+        connection.status = 'declined'
+        connection.responded_at = timezone.now()
+        connection.save()
+
+        return Response({"message": "Request declined."}, status=status.HTTP_200_OK)
+
+
+# --- 11. CONVERSATIONS & MESSAGES ---
+class ConversationListView(generics.ListAPIView):
+    """GET /api/fitness/conversations/"""
+    serializer_class = ConversationListSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def get_queryset(self):
+        user = self.request.user
+        return Conversation.objects.filter(Q(trainer=user) | Q(client=user)).order_by('-created_at')
+
+
+class ConversationMessagesView(generics.ListCreateAPIView):
+    """
+    GET  /api/fitness/conversations/<id>/messages/  — history (also used to seed the socket)
+    POST /api/fitness/conversations/<id>/messages/  — fallback send if the websocket is down
+    """
+    serializer_class = MessageSerializer
+    permission_classes = (IsAuthenticated,)
+
+    def _get_conversation(self):
+        conversation = Conversation.objects.filter(
+            Q(pk=self.kwargs['pk']) & (Q(trainer=self.request.user) | Q(client=self.request.user))
+        ).first()
+        if not conversation:
+            raise NotFound("Conversation not found.")
+        return conversation
+
+    def get_queryset(self):
+        return self._get_conversation().messages.all()
+
+    def create(self, request, *args, **kwargs):
+        conversation = self._get_conversation()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        message = serializer.save(sender=request.user, conversation=conversation)
+
+        try:
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f'chat_{conversation.id}',
+                {
+                    'type': 'chat_message',
+                    'id': message.id,
+                    'conversation': conversation.id,
+                    'sender': request.user.id,
+                    'sender_id': request.user.id,
+                    'text': message.text,
+                    'created_at': message.created_at.isoformat(),
+                }
+            )
+        except Exception:
+            pass
+
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+
+===================================================
+FILE: fitness_backend\__init__.py
+===================================================
+
+
+===================================================
+FILE: fitness_backend\asgi.py
+===================================================
+"""
+ASGI config for fitness_backend project.
+
+Serves plain HTTP requests through Django as usual, and routes anything
+under /ws/ to Channels for the trainer<->client chat. JWTAuthMiddleware
+(fitness/channels_auth.py) reads the ?token= query param on the WebSocket
+URL so consumers see request.user the same way DRF views do.
+"""
+
+import os
+
+from django.core.asgi import get_asgi_application
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'fitness_backend.settings')
+
+# get_asgi_application() must run before importing anything that touches
+# models/apps (Channels routing does, via consumers.py), or Django raises
+# AppRegistryNotReady.
+django_asgi_app = get_asgi_application()
+
+from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
+from fitness.channels_auth import JWTAuthMiddleware  # noqa: E402
+from fitness.routing import websocket_urlpatterns  # noqa: E402
+
+application = ProtocolTypeRouter({
+    "http": django_asgi_app,
+    "websocket": JWTAuthMiddleware(
+        URLRouter(websocket_urlpatterns)
+    ),
+})
+
+
+
+===================================================
+FILE: fitness_backend\settings.py
+===================================================
+import os
+from pathlib import Path
+from datetime import timedelta
+from dotenv import load_dotenv
+
+# Build paths inside the project like this: BASE_DIR / 'subdir'.
+load_dotenv()
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Read settings from environment variables
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-9kck4bh$yyysxk_!xvk5_=cfk$zxn3)_0ls60j40-!1a$66-s3')
+DEBUG = os.getenv('DEBUG', 'True') == 'True'
+
+ALLOWED_HOSTS = ['*']
+
+
+# Application definition
+
+INSTALLED_APPS = [
+    # Must be listed before django.contrib.staticfiles so it can take over
+    # the "runserver" command and serve both HTTP and WebSocket traffic.
+    'daphne',
+
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+
+    # 3rd Party Installed Packages
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'corsheaders',
+    'channels',
+
+    # Our Backend Local Apps
+    'accounts',
+    'fitness',
+    'ai_engine',
+]
+
+MIDDLEWARE = [
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+
+ROOT_URLCONF = 'fitness_backend.urls'
+
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [],
+        'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = 'fitness_backend.wsgi.application'
+
+# ASGI is now required alongside WSGI so Channels can handle WebSocket
+# connections (chat) while Django still serves normal HTTP/DRF requests.
+ASGI_APPLICATION = 'fitness_backend.asgi.application'
+
+# Dev default: in-memory channel layer, no extra service required.
+# Swap to channels_redis once you have Redis running (e.g. via Docker):
+#   CHANNEL_LAYERS = {
+#       'default': {
+#           'BACKEND': 'channels_redis.core.RedisChannelLayer',
+#           'CONFIG': {'hosts': [('127.0.0.1', 6379)]},
+#       }
+#   }
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    }
+}
+
+
+# Database
+# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('DB_NAME'),
+        'USER': os.getenv('DB_USER'),
+        'PASSWORD': os.getenv('DB_PASSWORD'),
+        'HOST': os.getenv('DB_HOST'),
+        'PORT': os.getenv('DB_PORT'),
+    }
+}
+
+AUTH_USER_MODEL = 'accounts.User'
+
+
+
+
+# 4. Enable Cross-Origin requests so React.js frontend can connect
+CORS_ALLOW_ALL_ORIGINS = True
+
+# Password validation
+# https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
+
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+    },
+]
+
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
+}
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),      # Generous lifespan for development/testing
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}
+
+# Internationalization
+# https://docs.djangoproject.com/en/5.2/topics/i18n/
+
+LANGUAGE_CODE = 'en-us'
+
+TIME_ZONE = 'UTC'
+
+USE_I18N = True
+
+USE_TZ = True
+
+
+# Static files (CSS, JavaScript, Images)
+# https://docs.djangoproject.com/en/5.2/howto/static-files/
+
+STATIC_URL = 'static/'
+
+# Default primary key field type
+# https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+
+===================================================
+FILE: fitness_backend\urls.py
+===================================================
+"""
+URL configuration for fitness_backend project.
+"""
+from django.contrib import admin
+from django.urls import path, include
+
+# --- CUSTOM BRANDING FOR DJANGO ADMIN PANEL ---
+admin.site.site_header = "AI Personal Health & Fitness Admin Portal"
+admin.site.site_title = "Sandra's AI Fitness Portal"
+admin.site.index_title = "Welcome to the AI Health & Fitness Management Administration Console"
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    
+    # Auth routing
+    path('api/auth/', include('accounts.urls')),
+    
+    # Fitness & AI routing
+    path('api/fitness/', include('fitness.urls')),
+    path('api/ai/', include('ai_engine.urls')),
+]
+
+
+
+===================================================
+FILE: fitness_backend\wsgi.py
+===================================================
+"""
+WSGI config for fitness_backend project.
+
+It exposes the WSGI callable as a module-level variable named ``application``.
+
+For more information on this file, see
+https://docs.djangoproject.com/en/5.2/howto/deployment/wsgi/
+"""
+
+import os
+
+from django.core.wsgi import get_wsgi_application
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'fitness_backend.settings')
+
+application = get_wsgi_application()
+
+
+
