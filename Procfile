@@ -1,1 +1,1 @@
-web: python manage.py migrate --noinput && python manage.py collectstatic --noinput && daphne fitness_backend.asgi:application --port $PORT --bind 0.0.0.0
+web: python manage.py migrate && daphne fitness_backend.asgi:application --port $PORT --bind 0.0.0.0
