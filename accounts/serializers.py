@@ -13,8 +13,8 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'role')
 
     def get_has_completed_onboarding(self, user):
-        if user.role in [User.Role.TRAINER, User.Role.ADMIN]:
-            return hasattr(user, 'trainer_profile') and bool(user.trainer_profile.bio or user.trainer_profile.specialties)
+        # Single onboarding path now — everyone (USER/ADMIN) completes the
+        # personal health profile; the AI trainer handles the rest.
         return hasattr(user, 'profile')
 
 # Serializer to handle user sign-ups
@@ -33,7 +33,7 @@ class UserRegisterSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         password = validated_data.pop('password')
         role = validated_data.get('role', User.Role.USER)
-        
+
         user = User.objects.create_user(
             username=validated_data['email'],  # Django's AbstractUser requires a unique username
             email=validated_data['email'],

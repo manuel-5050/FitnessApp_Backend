@@ -36,7 +36,9 @@
 │   ├── urls.py
 │   ├── wsgi.py
 ├── .env
+├── .gitignore
 ├── backend-contents.txt
 ├── backend-structure.txt
 ├── manage.py
+├── Procfile
 ├── requirements.txt

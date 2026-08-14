@@ -39,9 +39,11 @@ FILE: backend-structure.txt
 │   ├── urls.py
 │   ├── wsgi.py
 ├── .env
+├── .gitignore
 ├── backend-contents.txt
 ├── backend-structure.txt
 ├── manage.py
+├── Procfile
 ├── requirements.txt
 
 
@@ -2310,7 +2312,7 @@ urlpatterns = [
     path('alerts/<int:pk>/resolve/', AlertResolveView.as_view(), name='alert_resolve'),
     
     # Trainer Roster & Plan Overrides
-    path('trainer/clients/', TrainerClientListView.as_view(), name='trainer_client_list'),
+    path('trainer-clients/', TrainerClientListView.as_view(), name='trainer_client_list'), # <--- Change to hyphen!
     path('trainer/override-diet/', TrainerOverrideDietPlanView.as_view(), name='trainer_override_diet'),
     
     # Visual Progress Charts Dashboard Stats (Step 9)
@@ -2398,7 +2400,11 @@ class PersonalHealthProfileView(generics.RetrieveUpdateDestroyAPIView):
     def get(self, request, *args, **kwargs):
         profile = self.get_object()
         if profile is None:
-            return Response({}, status=status.HTTP_200_OK)
+            # CORRECTED: Return a 404 so React knows they haven't completed onboarding yet!
+            return Response(
+                {"detail": "Profile not created yet. Please complete onboarding."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
         serializer = self.get_serializer(profile)
         return Response(serializer.data)
 

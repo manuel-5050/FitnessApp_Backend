@@ -814,3 +814,99 @@ def _fallback_chat_reply(message: str) -> str:
         "I'm your PulseFit AI assistant. Ask me about your workout plan, nutrition targets, "
         "recovery, or anything about staying consistent with your fitness goals."
     )
+
+
+# --- PROGRESS INSIGHT (used by fitness.services.generate_and_save_progress_insight) ---
+
+def generate_progress_insight(context: dict) -> str:
+    """
+    Produces a short, readable 1-2 sentence comment on a single day's
+    logged progress against the user's targets. Reuses the same
+    Groq -> OpenAI -> fallback chain as plan generation and chat, just
+    prompted for a compact daily readout instead of structured JSON or a
+    full conversational reply.
+
+    :param context: dict with keys:
+        fitness_goal, target_calories, target_protein, target_carbs,
+        target_fats, target_water_ml, calories_consumed, protein_consumed,
+        carbs_consumed, fats_consumed, water_intake, weight_logged,
+        fatigue_level, workout_completed_today (bool or None)
+    :return: short insight string
+    """
+    engine = AIFitnessEngine()
+
+    if engine.client:
+        try:
+            prompt = f"""
+You are PulseFit AI, a fitness coach. Write ONE short, encouraging, specific
+sentence (max 2 sentences) commenting on the user's progress today compared
+to their targets. Be concrete with numbers where useful. Do not use markdown,
+headers, or bullet points. Do not greet the user or sign off. Just the
+comment itself.
+
+Goal: {context.get('fitness_goal', 'maintenance')}
+Calorie target: {context.get('target_calories')}, consumed today: {context.get('calories_consumed')}
+Protein target: {context.get('target_protein')}g, consumed: {context.get('protein_consumed')}g
+Carbs target: {context.get('target_carbs')}g, consumed: {context.get('carbs_consumed')}g
+Fats target: {context.get('target_fats')}g, consumed: {context.get('fats_consumed')}g
+Water target: {context.get('target_water_ml')}ml, logged: {context.get('water_intake')}ml
+Weight logged today: {context.get('weight_logged')}
+Fatigue level today (1-10): {context.get('fatigue_level')}
+Workout completed today: {context.get('workout_completed_today')}
+"""
+            response = engine.client.chat.completions.create(
+                model=engine.model_name,
+                messages=[
+                    {"role": "system", "content": "You write single-sentence progress readouts for a fitness app. Be specific, warm, and brief."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.6,
+                max_tokens=100,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"Progress insight generation failed: {str(e)}. Falling back to deterministic summary.")
+
+    return _fallback_progress_insight(context)
+
+
+def _fallback_progress_insight(context: dict) -> str:
+    """Deterministic, rule-based version used when no AI provider is configured
+    or the API call fails — keeps the insight card populated offline."""
+    calories_consumed = context.get('calories_consumed')
+    target_calories = context.get('target_calories')
+    water_intake = context.get('water_intake')
+    target_water_ml = context.get('target_water_ml')
+    fatigue_level = context.get('fatigue_level')
+    workout_completed_today = context.get('workout_completed_today')
+
+    parts = []
+
+    if calories_consumed is not None and target_calories:
+        diff = calories_consumed - target_calories
+        if abs(diff) <= target_calories * 0.05:
+            parts.append("You're right on target with calories today.")
+        elif diff > 0:
+            parts.append(f"You're {diff} kcal over your calorie target today.")
+        else:
+            parts.append(f"You're {abs(diff)} kcal under your calorie target today.")
+
+    if water_intake is not None and target_water_ml:
+        pct = round((water_intake / target_water_ml) * 100)
+        if pct >= 90:
+            parts.append("Hydration looks solid.")
+        elif pct >= 50:
+            parts.append(f"You're at {pct}% of your water target — worth topping up.")
+        else:
+            parts.append(f"Water intake is low today at {pct}% of target.")
+
+    if workout_completed_today:
+        parts.append("Nice work getting today's session done.")
+
+    if fatigue_level is not None and fatigue_level >= 8:
+        parts.append("Fatigue is high — consider an easier day if it continues.")
+
+    if not parts:
+        return "Log a few more metrics today and I'll have something to say about your progress."
+
+    return " ".join(parts[:2])

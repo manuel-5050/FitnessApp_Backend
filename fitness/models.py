@@ -51,16 +51,9 @@ class PersonalHealthProfile(models.Model):
         return f"Profile of {self.user.email}"
 
 
-# 2. Workout Schedules (Active / Inactive)
+# 2. Workout Schedules (Active / Inactive) — always AI-authored now
 class WorkoutPlan(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='workout_plans')
-    trainer = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='assigned_workouts'
-    )
     title = models.CharField(max_length=150)
     target_goal = models.CharField(max_length=100)
     start_date = models.DateField(null=True, blank=True)
@@ -70,7 +63,6 @@ class WorkoutPlan(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
-        # Automatically deactivate all other active workout plans of the user on saving this one
         if self.is_active:
             WorkoutPlan.objects.filter(user=self.user, is_active=True).exclude(pk=self.pk).update(is_active=False)
         super().save(*args, **kwargs)
@@ -105,16 +97,9 @@ class Exercise(models.Model):
         return f"{self.name} - {self.sets}x{self.reps}"
 
 
-# 3. Diet Schedules (Active / Inactive)
+# 3. Diet Schedules (Active / Inactive) — always AI-authored now
 class DietPlan(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='diet_plans')
-    trainer = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='assigned_diets'
-    )
     title = models.CharField(max_length=150)
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
@@ -127,7 +112,6 @@ class DietPlan(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
-        # Automatically deactivate all other active diet plans of the user on saving this one
         if self.is_active:
             DietPlan.objects.filter(user=self.user, is_active=True).exclude(pk=self.pk).update(is_active=False)
         super().save(*args, **kwargs)
@@ -165,8 +149,18 @@ class DailyLog(models.Model):
     weight_logged = models.FloatField(null=True, blank=True, help_text="Weight in kg")
     water_intake = models.PositiveIntegerField(default=0, help_text="Water in ml")
     calories_consumed = models.PositiveIntegerField(null=True, blank=True)
+    # Auto-filled from completed MealLogs when meals are marked eaten (see
+    # fitness/services.py: recompute_daily_nutrition_from_meals), but can
+    # still be set manually on days the user doesn't use meal-marking.
+    protein_consumed = models.PositiveIntegerField(null=True, blank=True, help_text="in grams")
+    carbs_consumed = models.PositiveIntegerField(null=True, blank=True, help_text="in grams")
+    fats_consumed = models.PositiveIntegerField(null=True, blank=True, help_text="in grams")
     fatigue_level = models.PositiveIntegerField(null=True, blank=True, help_text="Scale 1-10")
     notes = models.TextField(blank=True, default='')
+    # Short AI-written readout of today's progress vs targets, regenerated
+    # every time this log is saved (manually or via meal-marking) — see
+    # fitness/services.py: generate_and_save_progress_insight.
+    ai_insight = models.TextField(blank=True, default='')
 
     class Meta:
         unique_together = ('user', 'date')
@@ -192,11 +186,31 @@ class WorkoutLog(models.Model):
         return f"{self.user.email} - {self.workout_session.session_name} on {self.date} ({status})"
 
 
-# 5. Burnout and Plateau Warnings
+# 4b. Meal completion logs — mirrors WorkoutLog. Marking a meal "eaten" for a
+# date drives DailyLog.calories_consumed/protein_consumed/etc. automatically
+# instead of requiring manual entry.
+class MealLog(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='meal_logs')
+    meal = models.ForeignKey(Meal, on_delete=models.CASCADE, related_name='logs')
+    date = models.DateField()
+    completed = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'meal', 'date')
+        ordering = ['-date']
+
+    def __str__(self):
+        status = "Eaten" if self.completed else "Skipped"
+        return f"{self.user.email} - {self.meal.name} on {self.date} ({status})"
+
+
+# 5. Burnout, Plateau and Hydration Warnings
 class Alert(models.Model):
     ALERT_TYPES = (
         ('burnout', 'Burnout Warning'),
         ('plateau', 'Plateau Warning'),
+        ('hydration', 'Hydration Warning'),
     )
 
     STATUS_CHOICES = (
@@ -218,108 +232,19 @@ class Alert(models.Model):
         return f"{self.get_type_display()} ({self.status}) for {self.user.email}"
 
 
-# 6. Trainer-Client Mappings
-class TrainerRelationship(models.Model):
-    trainer = models.ForeignKey(
+# 6. AI Trainer Chat — persisted history for the live AI coaching chat.
+class AIChatMessage(models.Model):
+    ROLE_CHOICES = (
+        ('user', 'User'),
+        ('assistant', 'AI Trainer'),
+    )
+
+    user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='clients'
+        related_name='ai_chat_messages'
     )
-    client = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='trainers'
-    )
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ('trainer', 'client')
-
-    def __str__(self):
-        return f"Trainer {self.trainer.email} -> Client {self.client.email}"
-
-# 7. Public-facing trainer profile (browsable by clients on /find-trainer)
-class TrainerProfile(models.Model):
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='trainer_profile'
-    )
-    bio = models.TextField(blank=True, default='')
-    specialties = models.JSONField(default=list, blank=True)
-    years_experience = models.PositiveIntegerField(null=True, blank=True)
-    certifications = models.JSONField(default=list, blank=True, help_text="List of certification names")
-    rating = models.FloatField(default=0.0)
-
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"Trainer profile for {self.user.email}"
-
-
-# 8. Trainer <-> Client connection requests (browse -> request -> accept flow)
-class Connection(models.Model):
-    STATUS_CHOICES = (
-        ('pending', 'Pending'),
-        ('accepted', 'Accepted'),
-        ('declined', 'Declined'),
-    )
-
-    from_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='sent_connections'
-    )
-    to_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='received_connections'
-    )
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
-    note = models.TextField(blank=True, default='')
-    created_at = models.DateTimeField(auto_now_add=True)
-    responded_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        ordering = ['-created_at']
-
-    def __str__(self):
-        return f"{self.from_user.email} -> {self.to_user.email} ({self.status})"
-
-
-# 9. A trainer<->client message thread, created once a Connection is accepted
-class Conversation(models.Model):
-    trainer = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='trainer_conversations'
-    )
-    client = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='client_conversations'
-    )
-    connection = models.OneToOneField(
-        Connection,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='conversation'
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ('trainer', 'client')
-
-    def __str__(self):
-        return f"Conversation: {self.trainer.email} <-> {self.client.email}"
-
-
-class Message(models.Model):
-    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
-    sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='sent_messages')
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES)
     text = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -327,4 +252,4 @@ class Message(models.Model):
         ordering = ['created_at']
 
     def __str__(self):
-        return f"{self.sender.email}: {self.text[:40]}"
+        return f"[{self.role}] {self.user.email}: {self.text[:40]}"

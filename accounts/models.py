@@ -2,10 +2,11 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 
 class User(AbstractUser):
-    # Defining our 3 User Roles as text options
+    # Defining our User Roles as text options.
+    # TRAINER role removed — PulseFit AI now uses a single AI trainer,
+    # with only USER and ADMIN as human account roles.
     class Role(models.TextChoices):
         ADMIN = 'ADMIN', 'Admin'
-        TRAINER = 'TRAINER', 'Trainer'
         USER = 'USER', 'User'
 
     email = models.EmailField(unique=True)

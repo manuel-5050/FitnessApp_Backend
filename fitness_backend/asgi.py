@@ -2,7 +2,7 @@
 ASGI config for fitness_backend project.
 
 Serves plain HTTP requests through Django as usual, and routes anything
-under /ws/ to Channels for the trainer<->client chat. JWTAuthMiddleware
+under /ws/ to Channels for the live AI trainer chat. JWTAuthMiddleware
 (fitness/channels_auth.py) reads the ?token= query param on the WebSocket
 URL so consumers see request.user the same way DRF views do.
 """
